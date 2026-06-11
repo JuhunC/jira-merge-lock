@@ -173,6 +173,7 @@ Structured JSON logs; one line per noteworthy event:
 | Nothing happens on PRs | Is the app installed on the org (and on **all** repositories)? Does an org ruleset name start with `RULESET_NAME_PREFIX`? Is that ruleset's enforcement **Active** (Disabled/Evaluate rulesets are out of scope by design)? Does it actually target the PR's repo and base branch? |
 | Every PR blocked with “Jira unreachable — cannot verify” | Jira credentials or connectivity: check `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: SHAs that already have a verdict keep it during an outage — only never-verified pushes fail closed. |
 | PRs in some repo permanently unmergeable, app logs show nothing for it | Installation-coverage mismatch: a prefix ruleset targets a repo the app is not installed on. Install on **All repositories** (setup step 2). |
+| `poll_cycle_failed` mentions `api.github.com` although `GHE_HOST` is set | The variable is not reaching the container. Check the startup log line `github_api_base` (it states the exact API target), and `docker compose exec jira-merge-lock env \| grep GHE`. Note: `docker-compose.sample.yml` does **not** read `.env` — set `GHE_HOST` in its `environment:` block. With the plain `docker-compose.yml`, put it in `.env`. Restart after changing either. |
 
 ### Merge queues
 

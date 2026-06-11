@@ -157,6 +157,16 @@ async function main(): Promise<void> {
     ...(cfg.logFormat === 'pretty' ? { transport: { target: 'pino-pretty' } } : {}),
   });
 
+  // First substantive log line: which GitHub API this process will talk to.
+  // "GHE_HOST set but app still calls api.github.com" is always an env-not-
+  // reaching-the-container problem — this line settles it instantly.
+  log.info(
+    { evt: 'github_api_base', url: cfg.githubBaseUrl ?? 'https://api.github.com' },
+    cfg.githubBaseUrl
+      ? `GitHub API target: ${cfg.githubBaseUrl}`
+      : 'GitHub API target: https://api.github.com — set GHE_HOST if this should be a GitHub Enterprise Server instance',
+  );
+
   const jira = new JiraClient(cfg, { logger: log });
   const scopeCache = new ScopeCache(Math.max(60, cfg.pollIntervalSeconds) * 1000);
   const readiness: Readiness = { ready: false, reason: 'startup probe pending' };
