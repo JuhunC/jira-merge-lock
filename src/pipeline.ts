@@ -116,6 +116,22 @@ export async function evaluatePullRequest(
     log,
   );
   if (!inScope) {
+    // "Webhook arrived, nothing happened" must be explainable from the logs:
+    // event-triggered out-of-scope decisions log at info. The poll path logs
+    // at debug — it re-visits every open PR each cycle and would spam.
+    const logFn = trigger === 'poll' ? log.debug.bind(log) : log.info.bind(log);
+    logFn(
+      {
+        evt: 'out_of_scope',
+        owner: pull.owner,
+        repo: pull.repo,
+        pr: pull.pullNumber,
+        base: pull.baseRef,
+        trigger,
+        prefix: cfg.rulesetNamePrefix,
+      },
+      `PR out of scope — no active ruleset requires "${cfg.checkName}" on base branch "${pull.baseRef}"`,
+    );
     await postSkippedRun(
       octokit,
       { ...checkRef, appId: cfg.appId },
