@@ -57,10 +57,21 @@ the app logs a loud warning at auto-configure time if it detects
 
 ### 3. Deploy the container
 
-Grab `docker-compose.yml` and `.env.example` (attached as
-`default.env.example` — GitHub release assets cannot start with a dot) from the
-[latest release](https://github.com/JuhunC/jira-merge-lock/releases/latest),
-save it as `.env`, fill it in, then:
+Two equivalent setups — grab the one you prefer from the
+[latest release](https://github.com/JuhunC/jira-merge-lock/releases/latest):
+
+**Option A — single file, tweaks inline.** Download
+`docker-compose.sample.yml`: every setting lives in the compose file itself
+with comments, defaults, and the three required values marked ➊ ➋ ➌. Drop your
+App's PEM next to it as `private-key.pem`, fill in the marks, then:
+
+```sh
+docker compose -f docker-compose.sample.yml up -d
+```
+
+**Option B — compose + env file.** Download `docker-compose.yml` and
+`.env.example` (attached as `default.env.example` — GitHub release assets
+cannot start with a dot), save the latter as `.env`, fill it in, then:
 
 ```sh
 docker compose up -d

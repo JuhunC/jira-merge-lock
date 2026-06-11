@@ -1,0 +1,107 @@
+# jira-merge-lock — single-file sample compose. Every common tweak is inline;
+# no separate .env needed. (Prefer env-file based config? Use the plain
+# docker-compose.yml + .env.example instead.)
+#
+# Quick start:
+#   1. Save your GitHub App's private key next to this file as  private-key.pem
+#   2. Fill in the values marked ➊ ➋ ➌ below
+#   3. docker compose -f docker-compose.sample.yml up -d
+#   4. Put a public HTTPS reverse proxy in front of 127.0.0.1:3000 and point
+#      the GitHub App's webhook URL at  https://<your-host>/api/github/webhooks
+#
+# ⚠ Run exactly ONE replica. A second instance doubles GitHub/Jira API costs
+#   and races the org-ruleset auto-configure writes. One container happily
+#   serves many organizations.
+
+services:
+  jira-merge-lock:
+    # ":0" tracks the newest 0.x (minor/patch updates on pull, no breaking
+    # changes). Pin ":0.1.0" for full reproducibility. Bump to ":1" at v1.0.0.
+    image: ghcr.io/juhunc/jira-merge-lock:0
+    restart: unless-stopped
+
+    # Bound to loopback on purpose — expose ONLY via your HTTPS reverse proxy.
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    volumes:
+      - ./private-key.pem:/keys/app.pem:ro
+      # Jira Server/DC behind a self-signed or internal CA? Mount the CA bundle
+      # and uncomment NODE_EXTRA_CA_CERTS below.
+      # - ./corp-ca.pem:/certs/corp-ca.pem:ro
+
+    environment:
+      # ── GitHub App (required) ──────────────────────────────────────────────
+      APP_ID: "12345"                 # ➊ App ID from the app's settings page
+      WEBHOOK_SECRET: "change-me"     # ➋ webhook secret chosen at app creation
+      PRIVATE_KEY_PATH: /keys/app.pem # the PEM mounted above
+
+      # ── Jira connection (required — keep exactly ONE auth block) ──────────
+      JIRA_BASE_URL: "https://yourco.atlassian.net" # ➌ no trailing slash
+
+      # Jira Cloud (email + API token):
+      JIRA_AUTH_METHOD: cloud
+      JIRA_EMAIL: "bot@yourco.com"
+      JIRA_API_TOKEN: "your-api-token"
+
+      # Jira Server / Data Center 8.14+ (personal access token) — delete the
+      # cloud block above and uncomment:
+      # JIRA_AUTH_METHOD: pat
+      # JIRA_PAT: "your-personal-access-token"
+
+      # Legacy Jira Server (username + password):
+      # JIRA_AUTH_METHOD: basic
+      # JIRA_USERNAME: "bot"
+      # JIRA_PASSWORD: "secret"
+
+      # ── Behavior tweaks (optional — defaults shown) ────────────────────────
+      # Org rulesets whose name starts with this prefix define WHERE the lock
+      # applies; the app auto-injects its required check into them.
+      # RULESET_NAME_PREFIX: "jira-merge-lock"
+
+      # Jira statuses that unblock a merge (case-insensitive, comma list).
+      # JIRA_DONE_STATUSES: "Closed,Resolved"
+
+      # "true": any status in Jira's built-in "Done" category also unblocks
+      # (rename/locale-proof; slightly looser — Won't Fix usually counts).
+      # JIRA_DONE_USE_CATEGORY: "false"
+
+      # Restrict key scanning to these Jira projects (kills false positives
+      # like UTF-8). Empty = all projects.
+      # JIRA_PROJECT_KEYS: "PRJ,OPS"
+
+      # Pattern for issue keys in commit messages.
+      # JIRA_KEY_REGEX: '[A-Z][A-Z0-9]+-\d+'
+
+      # "true": PRs whose commits reference NO Jira issue are blocked too.
+      # REQUIRE_ISSUE_KEY: "false"
+
+      # How often Jira is re-checked for open PRs (seconds). "0" disables
+      # polling — locks then only update on PR events / manual re-runs.
+      # POLL_INTERVAL_SECONDS: "300"
+      # POLL_CONCURRENCY: "5"
+
+      # Name of the check run / required status context.
+      # CHECK_NAME: "jira-merge-lock"
+
+      # "false": never write rulesets — an admin maintains the required-check
+      # entry by hand (hardened mode).
+      # RULESET_AUTOCONFIGURE: "true"
+
+      # Public HTTPS base URL of this deployment. When set, every check run
+      # links to the guidelines homepage the app serves at "/".
+      # PUBLIC_URL: "https://jira-merge-lock.yourco.com"
+
+      # ── Plumbing (rarely needed) ───────────────────────────────────────────
+      # LOG_LEVEL: "info"            # trace|debug|info|warn|error
+      # LOG_FORMAT: "json"           # "pretty" for human-readable logs
+      # JIRA_TIMEOUT_MS: "10000"
+      # PORT: "3000"                 # keep in sync with the ports: mapping
+      # NODE_EXTRA_CA_CERTS: /certs/corp-ca.pem   # with the CA mount above
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
