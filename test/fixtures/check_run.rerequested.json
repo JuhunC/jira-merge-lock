@@ -1,0 +1,25 @@
+{
+  "action": "rerequested",
+  "check_run": {
+    "id": 42001,
+    "name": "jira-merge-lock",
+    "head_sha": "1111111111111111111111111111111111111111",
+    "external_id": "stale-fingerprint",
+    "status": "completed",
+    "conclusion": "failure",
+    "app": { "id": 12345, "slug": "jira-merge-lock", "name": "jira-merge-lock" },
+    "check_suite": { "id": 43001 },
+    "pull_requests": []
+  },
+  "repository": {
+    "id": 1296269,
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": true,
+    "owner": { "login": "acme", "id": 5001, "type": "Organization" },
+    "default_branch": "main"
+  },
+  "organization": { "login": "acme", "id": 5001 },
+  "installation": { "id": 2, "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uMg==" },
+  "sender": { "login": "octocat", "type": "User" }
+}

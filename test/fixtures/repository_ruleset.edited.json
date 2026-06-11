@@ -1,0 +1,20 @@
+{
+  "action": "edited",
+  "repository_ruleset": {
+    "id": 2,
+    "name": "jira-merge-lock-release",
+    "target": "branch",
+    "source_type": "Organization",
+    "source": "acme",
+    "enforcement": "active",
+    "node_id": "RRS_lACkVA",
+    "created_at": "2026-05-01T10:00:00Z",
+    "updated_at": "2026-06-10T09:30:00Z"
+  },
+  "changes": {
+    "rules": {}
+  },
+  "organization": { "login": "acme", "id": 5001 },
+  "installation": { "id": 2, "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uMg==" },
+  "sender": { "login": "acme-admin", "type": "User" }
+}

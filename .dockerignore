@@ -1,0 +1,12 @@
+node_modules
+lib
+coverage
+.git
+.github
+.env
+*.pem
+test
+tools
+Dockerfile
+docker-compose.yml
+README.md

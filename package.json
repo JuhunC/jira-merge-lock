@@ -1,0 +1,31 @@
+{
+  "name": "jira-merge-lock",
+  "version": "0.1.0",
+  "description": "GitHub App that blocks PR merges until every Jira issue referenced in the PR's commit messages is closed/resolved",
+  "type": "module",
+  "main": "lib/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node lib/main.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "pino": "^9.0.0",
+    "pino-pretty": "^13.0.0",
+    "probot": "^14.3.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "nock": "^14.0.15",
+    "smee-client": "^5.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.8"
+  }
+}

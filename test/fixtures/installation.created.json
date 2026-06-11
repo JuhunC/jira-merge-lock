@@ -1,0 +1,24 @@
+{
+  "action": "created",
+  "installation": {
+    "id": 2,
+    "app_id": 12345,
+    "app_slug": "jira-merge-lock",
+    "target_type": "Organization",
+    "repository_selection": "selected",
+    "account": { "login": "acme", "id": 5001, "type": "Organization" },
+    "permissions": {
+      "checks": "write",
+      "pull_requests": "read",
+      "contents": "read",
+      "metadata": "read",
+      "organization_administration": "write"
+    },
+    "events": ["pull_request", "check_run", "check_suite", "repository_ruleset", "merge_group"]
+  },
+  "repositories": [
+    { "id": 1296269, "name": "widgets", "full_name": "acme/widgets", "private": true }
+  ],
+  "requester": null,
+  "sender": { "login": "acme-admin", "type": "User" }
+}

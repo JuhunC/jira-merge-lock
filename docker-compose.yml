@@ -1,0 +1,42 @@
+# jira-merge-lock — consumer deployment file (shipped as a release asset).
+#
+# IMPORTANT: run exactly ONE replica of this service. A second poller doubles
+# GitHub/Jira rate-limit costs and concurrent ruleset auto-configure widens the
+# read-modify-write race on org rulesets. Do not scale this service.
+
+services:
+  jira-merge-lock:
+    # Replace OWNER with the GitHub org/user that owns this repository.
+    # The tag pins the semver MAJOR (":1") — you get minor/patch updates on
+    # pull without breaking changes. Pin ":1.2.3" for full reproducibility.
+    image: ghcr.io/OWNER/jira-merge-lock:1
+    env_file: .env
+    # Bound to loopback on purpose: the webhook endpoint must be exposed to
+    # GitHub via a public HTTPS reverse proxy (nginx/Caddy/Traefik/etc.)
+    # forwarding to this port — never publish port 3000 directly.
+    ports:
+      - '127.0.0.1:3000:3000'
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    # Optional mounts — uncomment as needed:
+    # volumes:
+    #   # GitHub App private key as a file instead of the PRIVATE_KEY env var.
+    #   # Set PRIVATE_KEY_PATH=/keys/app.pem in .env (and unset PRIVATE_KEY).
+    #   - ./private-key.pem:/keys/app.pem:ro
+    #   # Corporate CA bundle for self-signed Jira Server/DC certificates.
+    #   # Also uncomment NODE_EXTRA_CA_CERTS below.
+    #   - ./corp-ca.pem:/certs/corp-ca.pem:ro
+    # environment:
+    #   # Make Node trust the mounted CA bundle (self-signed Jira Server/DC).
+    #   - NODE_EXTRA_CA_CERTS=/certs/corp-ca.pem

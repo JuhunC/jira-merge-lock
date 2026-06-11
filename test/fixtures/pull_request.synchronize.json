@@ -1,0 +1,35 @@
+{
+  "action": "synchronize",
+  "number": 7,
+  "before": "1111111111111111111111111111111111111111",
+  "after": "3333333333333333333333333333333333333333",
+  "pull_request": {
+    "id": 700001,
+    "number": 7,
+    "state": "open",
+    "draft": false,
+    "title": "Add flux capacitor",
+    "user": { "login": "octocat", "type": "User" },
+    "head": {
+      "ref": "feature/flux",
+      "sha": "3333333333333333333333333333333333333333",
+      "repo": { "id": 1296269, "name": "widgets", "full_name": "acme/widgets" }
+    },
+    "base": {
+      "ref": "main",
+      "sha": "2222222222222222222222222222222222222222",
+      "repo": { "id": 1296269, "name": "widgets", "full_name": "acme/widgets" }
+    }
+  },
+  "repository": {
+    "id": 1296269,
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": true,
+    "owner": { "login": "acme", "id": 5001, "type": "Organization" },
+    "default_branch": "main"
+  },
+  "organization": { "login": "acme", "id": 5001 },
+  "installation": { "id": 2, "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uMg==" },
+  "sender": { "login": "octocat", "type": "User" }
+}
