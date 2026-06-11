@@ -43,6 +43,15 @@ secret** — keep all three for step 3.
 Least-privilege note: `organization_administration: write` exists solely for
 ruleset auto-configure. See [Hardened mode](#hardened-mode) to drop the writes.
 
+Registering manually instead? Set: repository **Checks: read & write**,
+**Pull requests: read**, **Contents: read**, **Merge queues: read**
+(+ Metadata, preset), and organization **Administration: read & write** — then
+subscribe to the events **Pull request**, **Check run**, **Check suite**,
+**Repository ruleset**, and **Merge group**. Event checkboxes appear in the UI
+only after the permission gating them is selected: *Repository ruleset*
+requires Administration (repo or org) read, and *Merge group* requires
+Merge queues read.
+
 ### 2. Install the app on your organization — on ALL repositories
 
 ⚠ **Install on “All repositories”, not “Only select repositories”.**
@@ -168,8 +177,10 @@ Structured JSON logs; one line per noteworthy event:
 Branches using GitHub merge queues are supported: the app handles
 `merge_group.checks_requested` and posts its check on the merge-group head SHA.
 Without that, a queue requiring the check would time out forever — so if you
-use merge queues, make sure you run a version that subscribes to the
-`merge_group` event (the `app.yml` manifest here does).
+use merge queues, make sure your app grants the **Merge queues: read**
+repository permission and subscribes to the `merge_group` event (the
+`app.yml` manifest here does both — the permission exists solely to receive
+the event; the app never writes to merge queues).
 
 ### Self-signed Jira Server/DC certificates
 

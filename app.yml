@@ -22,6 +22,9 @@ default_permissions:
   pull_requests: read
   # Commit-compare fallback for PRs with >250 commits.
   contents: read
+  # Required ONLY to receive the merge_group webhook event (merge-queue
+  # support). The app never writes to merge queues.
+  merge_queues: read
   # Baseline; branch-rules scope endpoint.
   metadata: read
   # Org ruleset read+write (auto-configure). NOT repo "administration".
