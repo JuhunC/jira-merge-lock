@@ -96,6 +96,8 @@ All variables (defaults in parentheses; blank = required):
 | `PORT` | | `3000` | webhooks + `/healthz` + `/readyz` + homepage |
 | `HOST` | | `0.0.0.0` | listen address; keep the default in containers |
 | `PUBLIC_URL` | | — | public HTTPS base URL of this deployment; when set, check runs link to the guidelines page |
+| `GHE_HOST` | | — | GitHub Enterprise Server hostname (e.g. `github.yourco.com`); unset = github.com. Register the App **on your GHES instance**, not github.com |
+| `GHE_PROTOCOL` | | `https` | protocol for `GHE_HOST` |
 | `LOG_LEVEL` | | `info` | `trace`…`silent` |
 | `LOG_FORMAT` | | `json` | `pretty` for local dev |
 | `JIRA_BASE_URL` | ✓ | — | no trailing slash; also builds `/browse/` links |

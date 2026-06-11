@@ -49,6 +49,10 @@ export interface AppConfig {
   /** Public base URL of this deployment (no trailing slash). Optional —
    * when set, check-run output links to the guidelines homepage. */
   publicUrl?: string;
+  /** GitHub REST API root, e.g. "https://github.yourco.com/api/v3" for
+   * GitHub Enterprise Server. Undefined = github.com. Derived from
+   * GHE_HOST / GHE_PROTOCOL (Probot's convention). */
+  githubBaseUrl?: string;
   /** Hash of every verdict-relevant setting; folded into check-run
    * fingerprints so a config change invalidates stale verdicts. */
   configHash: string;
@@ -88,6 +92,8 @@ const envSchema = z.object({
   POLL_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(300),
   POLL_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
   PUBLIC_URL: z.string().min(1).optional(),
+  GHE_HOST: z.string().min(1).optional(),
+  GHE_PROTOCOL: z.enum(['https', 'http']).default('https'),
 });
 
 function splitList(value: string | undefined): string[] {
@@ -174,6 +180,32 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     }
   }
 
+  // GHE_HOST accepts a bare hostname ("github.yourco.com") or a full URL
+  // ("https://github.yourco.com") — both resolve to <proto>://<host>/api/v3.
+  let githubBaseUrl: string | undefined;
+  if (e.GHE_HOST) {
+    let host = e.GHE_HOST.replace(/\/+$/, '');
+    let proto: string = e.GHE_PROTOCOL;
+    if (host.includes('://')) {
+      try {
+        const url = new URL(host);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('bad protocol');
+        if (url.pathname !== '/' && url.pathname !== '') throw new Error('unexpected path');
+        proto = url.protocol.replace(':', '');
+        host = url.host;
+      } catch {
+        problems.push(
+          `GHE_HOST: expected a hostname like "github.yourco.com" (or https URL without a path), got "${e.GHE_HOST}"`,
+        );
+        host = '';
+      }
+    } else if (/[\s/]/.test(host)) {
+      problems.push(`GHE_HOST: expected a hostname, got "${e.GHE_HOST}"`);
+      host = '';
+    }
+    if (host) githubBaseUrl = `${proto}://${host}/api/v3`;
+  }
+
   const projectKeys = splitList(e.JIRA_PROJECT_KEYS).map((s) => s.toUpperCase());
   for (const key of projectKeys) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
@@ -227,6 +259,7 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     pollIntervalSeconds: e.POLL_INTERVAL_SECONDS,
     pollConcurrency: e.POLL_CONCURRENCY,
     publicUrl,
+    githubBaseUrl,
     configHash,
   };
 }

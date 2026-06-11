@@ -176,6 +176,9 @@ async function main(): Promise<void> {
       secret: cfg.webhookSecret,
       logLevel: cfg.logLevel as never,
       logFormat: cfg.logFormat,
+      // GitHub Enterprise Server: without this every API call goes to
+      // api.github.com regardless of GHE_HOST in the environment.
+      baseUrl: cfg.githubBaseUrl,
     }),
     port: cfg.port,
     host: cfg.host,

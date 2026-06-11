@@ -92,6 +92,12 @@ services:
       # links to the guidelines homepage the app serves at "/".
       # PUBLIC_URL: "https://jira-merge-lock.yourco.com"
 
+      # GitHub Enterprise Server? Set your instance hostname — the app then
+      # talks to https://<GHE_HOST>/api/v3 instead of github.com. The App must
+      # be registered on your GHES instance, not on github.com.
+      # GHE_HOST: "github.yourco.com"
+      # GHE_PROTOCOL: "https"
+
       # ── Plumbing (rarely needed) ───────────────────────────────────────────
       # LOG_LEVEL: "info"            # trace|debug|info|warn|error
       # LOG_FORMAT: "json"           # "pretty" for human-readable logs

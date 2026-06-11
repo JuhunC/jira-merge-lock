@@ -107,6 +107,24 @@ describe('loadConfig', () => {
     expect(cfg.checkName).toBe('jira-merge-lock');
   });
 
+  it('derives the GitHub Enterprise API base URL from GHE_HOST', () => {
+    expect(loadConfig(testEnv()).githubBaseUrl).toBeUndefined();
+    expect(loadConfig(testEnv({ GHE_HOST: 'github.yourco.com' })).githubBaseUrl).toBe(
+      'https://github.yourco.com/api/v3',
+    );
+    expect(
+      loadConfig(testEnv({ GHE_HOST: 'github.internal', GHE_PROTOCOL: 'http' })).githubBaseUrl,
+    ).toBe('http://github.internal/api/v3');
+    // full-URL form is accepted too (protocol wins over GHE_PROTOCOL)
+    expect(loadConfig(testEnv({ GHE_HOST: 'https://github.yourco.com/' })).githubBaseUrl).toBe(
+      'https://github.yourco.com/api/v3',
+    );
+    expect(() => loadConfig(testEnv({ GHE_HOST: 'https://ghe.corp/api/v3' }))).toThrowError(
+      /GHE_HOST/,
+    );
+    expect(() => loadConfig(testEnv({ GHE_HOST: 'not a host' }))).toThrowError(/GHE_HOST/);
+  });
+
   it('configHash is stable and changes with verdict-relevant settings', () => {
     const a = loadConfig(testEnv());
     const b = loadConfig(testEnv());
