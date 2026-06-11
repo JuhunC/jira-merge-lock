@@ -15,14 +15,19 @@ required-check entry (pinned to its app id, so no other app can forge a green
 check) into every prefix-matched ruleset. GitHub then refuses the merge while
 the check is red.
 
-Two mechanisms keep the verdict current:
+Two mechanisms keep the verdict current, with different check-run lifecycles:
 
 - **Webhooks** — PR opened/updated/reopened/retargeted, check re-run requested,
   ruleset changed, merge-queue entry: each triggers an immediate re-evaluation.
+  Event-triggered evaluations show the check as **in progress** right away and
+  complete it with the verdict once the Jira lookup finishes — developers see
+  the re-check happening instead of a stale result.
 - **Stateless poller** — every `POLL_INTERVAL_SECONDS` (default 300) the app
   re-scans all open PRs in scope, so a Jira-side change (issue closed or
-  reopened) flips the lock with no push and no webhook. Writes are deduplicated
-  by fingerprint, so steady-state cycles are almost pure reads.
+  reopened) flips the lock with no push and no webhook. Background re-checks
+  update the verdict silently and only when it changes: writes are deduplicated
+  by fingerprint (no in-progress phase), so steady-state cycles are almost pure
+  reads.
 
 There is no database; state lives in GitHub's own check runs. Restarts are free.
 

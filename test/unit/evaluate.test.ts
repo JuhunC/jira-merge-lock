@@ -357,12 +357,36 @@ describe('buildErrorVerdict', () => {
     expect(v.title.toLowerCase()).toContain('split');
   });
 
+  it('jira_auth_failed fails, pointing the operator at the JIRA_* configuration', () => {
+    const v = buildErrorVerdict('jira_auth_failed', cfg);
+    expect(v.conclusion).toBe('failure');
+    expect(v.title).toBe('Jira authentication failed — cannot verify referenced issues');
+    expect(v.summary).toContain('credentials');
+    expect(v.summary).toContain('JIRA_');
+    expect(v.summary.toLowerCase()).toContain('operator');
+    // Developers cannot fix a deployment config failure from the PR.
+    expect(v.summary).toContain('Developers cannot resolve this from the PR');
+    expect(v.issues).toEqual([]);
+    expect(v.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('jira_auth_failed title is distinct from the other error kinds', () => {
+    const auth = buildErrorVerdict('jira_auth_failed', cfg);
+    expect(auth.title).not.toBe(buildErrorVerdict('jira_unreachable', cfg).title);
+    expect(auth.title).not.toBe(buildErrorVerdict('too_many_commits', cfg).title);
+  });
+
   it('error fingerprints are stable per kind and distinct across kinds', () => {
     const a1 = buildErrorVerdict('jira_unreachable', cfg);
     const a2 = buildErrorVerdict('jira_unreachable', cfg);
     const b = buildErrorVerdict('too_many_commits', cfg);
+    const c1 = buildErrorVerdict('jira_auth_failed', cfg);
+    const c2 = buildErrorVerdict('jira_auth_failed', cfg);
     expect(a1.fingerprint).toBe(a2.fingerprint);
+    expect(c1.fingerprint).toBe(c2.fingerprint);
     expect(a1.fingerprint).not.toBe(b.fingerprint);
+    expect(c1.fingerprint).not.toBe(a1.fingerprint);
+    expect(c1.fingerprint).not.toBe(b.fingerprint);
   });
 
   it('error fingerprints fold in the config hash', () => {
@@ -370,5 +394,8 @@ describe('buildErrorVerdict', () => {
     const a = buildErrorVerdict('jira_unreachable', cfg);
     const b = buildErrorVerdict('jira_unreachable', otherCfg);
     expect(a.fingerprint).not.toBe(b.fingerprint);
+    expect(buildErrorVerdict('jira_auth_failed', cfg).fingerprint).not.toBe(
+      buildErrorVerdict('jira_auth_failed', otherCfg).fingerprint,
+    );
   });
 });

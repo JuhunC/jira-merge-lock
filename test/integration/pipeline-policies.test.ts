@@ -2,13 +2,25 @@
  * Pipeline-level policy tests: evaluatePullRequest is driven directly with
  * structural fakes (OctokitLike + a stub JiraClient) — no Probot, no HTTP.
  *
- * Pins the degraded-mode and scope policies:
+ * Pins the degraded-mode and scope policies, split by trigger:
+ *
+ * Poll path (trigger 'poll' — silent, create-only, fingerprint-deduped):
  *  - Jira outage + latest run `skipped`  -> fail closed (skipped is a scope
  *    marker, not a verdict; GitHub treats skipped as passing a required check)
  *  - Jira outage + latest run is a real verdict -> keep it, zero writes
  *  - JiraAuthError (config failure)      -> zero writes, error log only
+ *
+ * Live path (any other trigger — in_progress immediately, completed via PATCH):
+ *  - Jira outage + prior real verdict    -> replicate it (incl. external_id)
+ *  - Jira outage + prior `skipped` only  -> NOT replicated; unreachable failure
+ *  - JiraAuthError on a fresh SHA        -> jira_auth_failed failure completion
+ *  - unexpected throw                    -> completed as failure, then rethrown
+ *    (an in_progress run may never be stranded on a required check)
+ *
+ * Scope gate (before ANY write, both paths):
  *  - out-of-scope + existing real run    -> superseded by a skipped run
  *  - out-of-scope + no run / already skipped -> zero writes
+ *  - out-of-scope never gets an in_progress run
  */
 import { describe, expect, it } from 'vitest';
 import { loadConfig, testEnv } from '../../src/config.js';
@@ -58,21 +70,34 @@ interface FakeGithub {
   branchRules: unknown[];
   commits?: string[];
   /** check_runs returned by the latest-run read (already filtered/latest). */
-  latestRuns?: Array<{ id?: number; external_id?: string | null; conclusion?: string | null }>;
+  latestRuns?: Array<{
+    id?: number;
+    external_id?: string | null;
+    conclusion?: string | null;
+    output?: { title?: string | null; summary?: string | null } | null;
+  }>;
 }
+
+const IN_PROGRESS_RUN_ID = 777;
 
 function makeFakeOctokit(state: FakeGithub): {
   octokit: OctokitLike;
   posted: Array<Record<string, unknown>>;
+  patched: Array<Record<string, unknown>>;
   checkRunReads: () => number;
 } {
   const posted: Array<Record<string, unknown>> = [];
+  const patched: Array<Record<string, unknown>> = [];
   let reads = 0;
   const octokit: OctokitLike = {
     async request(route, parameters = {}) {
       if (route === 'POST /repos/{owner}/{repo}/check-runs') {
         posted.push(parameters);
-        return { data: { id: 1 }, status: 201, headers: {} };
+        return { data: { id: IN_PROGRESS_RUN_ID }, status: 201, headers: {} };
+      }
+      if (route === 'PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}') {
+        patched.push(parameters);
+        return { data: { id: parameters['check_run_id'] }, status: 200, headers: {} };
       }
       if (route === 'GET /repos/{owner}/{repo}/commits/{ref}/check-runs') {
         reads += 1;
@@ -98,7 +123,7 @@ function makeFakeOctokit(state: FakeGithub): {
       throw new Error(`fake octokit: unexpected paginate ${route}`);
     },
   };
-  return { octokit, posted, checkRunReads: () => reads };
+  return { octokit, posted, patched, checkRunReads: () => reads };
 }
 
 /** Structural JiraClient stub: resolves outcomes or throws the given error.
@@ -145,7 +170,7 @@ function makeDeps(
   github: FakeGithub,
   jiraBehavior: { outcomes?: JiraIssueOutcome[]; error?: Error } = {},
 ) {
-  const { octokit, posted, checkRunReads } = makeFakeOctokit(github);
+  const { octokit, posted, patched, checkRunReads } = makeFakeOctokit(github);
   const { jira, calls: jiraCalls } = makeJiraStub(jiraBehavior);
   const { log, events } = makeLogSpy();
   const deps: PipelineDeps = {
@@ -155,12 +180,12 @@ function makeDeps(
     scopeCache: new ScopeCache(60_000),
     log,
   };
-  return { deps, posted, checkRunReads, jiraCalls, events };
+  return { deps, posted, patched, checkRunReads, jiraCalls, events };
 }
 
-describe('pipeline policy: Jira outage (JiraUnavailableError)', () => {
+describe('pipeline policy (poll path): Jira outage (JiraUnavailableError)', () => {
   it('latest run is `skipped`: fails closed — posts the jira_unreachable failure run', async () => {
-    const { deps, posted, checkRunReads } = makeDeps(
+    const { deps, posted, patched, checkRunReads } = makeDeps(
       {
         branchRules: IN_SCOPE_RULES,
         commits: ['PRJ-1: solo change'],
@@ -169,7 +194,7 @@ describe('pipeline policy: Jira outage (JiraUnavailableError)', () => {
       { error: new JiraUnavailableError('down', 'unreachable') },
     );
 
-    await evaluatePullRequest(deps, PULL, 'webhook');
+    await evaluatePullRequest(deps, PULL, 'poll');
 
     expect(posted).toHaveLength(1);
     const body = posted[0]!;
@@ -180,14 +205,15 @@ describe('pipeline policy: Jira outage (JiraUnavailableError)', () => {
     expect((body['output'] as { title: string }).title).toBe(
       'Jira unreachable — cannot verify referenced issues',
     );
-    // The degraded path already read the latest run; the write step reuses it.
+    expect(patched).toHaveLength(0);
+    // The single up-front read serves both the degraded path and the write step.
     expect(checkRunReads()).toBe(1);
   });
 
   it.each(['failure', 'success'] as const)(
     'latest run is a real verdict (%s): keeps it — zero writes, kept_last_verdict logged',
     async (conclusion) => {
-      const { deps, posted, events } = makeDeps(
+      const { deps, posted, patched, events } = makeDeps(
         {
           branchRules: IN_SCOPE_RULES,
           commits: ['PRJ-1: solo change'],
@@ -196,9 +222,10 @@ describe('pipeline policy: Jira outage (JiraUnavailableError)', () => {
         { error: new JiraUnavailableError('down', 'timeout') },
       );
 
-      await evaluatePullRequest(deps, PULL, 'webhook');
+      await evaluatePullRequest(deps, PULL, 'poll');
 
       expect(posted).toHaveLength(0);
+      expect(patched).toHaveLength(0);
       const kept = events.find((e) => e.obj['evt'] === 'jira_degraded');
       expect(kept).toBeDefined();
       expect(kept!.level).toBe('info');
@@ -208,7 +235,7 @@ describe('pipeline policy: Jira outage (JiraUnavailableError)', () => {
   );
 
   it('no run at all on the SHA: fails closed — posts the jira_unreachable failure run', async () => {
-    const { deps, posted } = makeDeps(
+    const { deps, posted, patched } = makeDeps(
       {
         branchRules: IN_SCOPE_RULES,
         commits: ['PRJ-1: solo change'],
@@ -217,36 +244,262 @@ describe('pipeline policy: Jira outage (JiraUnavailableError)', () => {
       { error: new JiraUnavailableError('down') },
     );
 
-    await evaluatePullRequest(deps, PULL, 'webhook');
+    await evaluatePullRequest(deps, PULL, 'poll');
 
     expect(posted).toHaveLength(1);
     expect(posted[0]!['conclusion']).toBe('failure');
+    expect(patched).toHaveLength(0);
   });
 });
 
-describe('pipeline policy: Jira credential failure (JiraAuthError)', () => {
+describe('pipeline policy (poll path): Jira credential failure (JiraAuthError)', () => {
   it('never writes a check run — logs jira_auth_failed at error and returns', async () => {
-    const { deps, posted, checkRunReads, events } = makeDeps(
+    const { deps, posted, patched, checkRunReads, events } = makeDeps(
       {
         branchRules: IN_SCOPE_RULES,
         commits: ['PRJ-1: solo change'],
         // A run exists; a regression into the outage branch would "keep" it
         // silently — a regression into the verdict path would POST. Both are
-        // distinguishable from the correct zero-read, zero-write behavior.
+        // distinguishable from the correct zero-write behavior.
         latestRuns: [{ id: 9, external_id: 'previous-fingerprint', conclusion: 'failure' }],
+      },
+      { error: new JiraAuthError('Jira rejected credentials (401)') },
+    );
+
+    await evaluatePullRequest(deps, PULL, 'poll');
+
+    expect(posted).toHaveLength(0);
+    expect(patched).toHaveLength(0);
+    // Only the single up-front read — never more.
+    expect(checkRunReads()).toBe(1);
+    const authEvt = events.find((e) => e.obj['evt'] === 'jira_auth_failed');
+    expect(authEvt).toBeDefined();
+    expect(authEvt!.level).toBe('error');
+    // Config failure must not be misfiled as an outage.
+    expect(events.some((e) => e.obj['evt'] === 'jira_degraded')).toBe(false);
+  });
+});
+
+describe('pipeline policy (live path): in_progress lifecycle', () => {
+  const PRIOR_OUTPUT = { title: 'All 1 Jira issues done', summary: 'the prior table' };
+  const OUTAGE_NOTE =
+    '_Jira could not be consulted during this re-check — showing the last verified result._';
+
+  it('verdict completion: in_progress POST then PATCH carrying the verdict and fingerprint', async () => {
+    const { deps, posted, patched, checkRunReads, events } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        latestRuns: [],
+      },
+      {
+        outcomes: [
+          { key: 'PRJ-1', outcome: 'found', statusName: 'Closed', statusCategoryKey: 'done' },
+        ],
+      },
+    );
+
+    await evaluatePullRequest(deps, PULL, 'webhook');
+
+    expect(posted).toHaveLength(1);
+    const inProgress = posted[0]!;
+    expect(inProgress['status']).toBe('in_progress');
+    expect(inProgress['head_sha']).toBe(HEAD_SHA);
+    expect((inProgress['output'] as { title: string }).title).toBe(
+      'Verifying referenced Jira issues…',
+    );
+
+    expect(patched).toHaveLength(1);
+    const patch = patched[0]!;
+    expect(patch['check_run_id']).toBe(IN_PROGRESS_RUN_ID);
+    expect(patch['status']).toBe('completed');
+    expect(patch['conclusion']).toBe('success');
+    expect(patch['external_id']).toMatch(/^[0-9a-f]{64}$/);
+    expect((patch['output'] as { title: string }).title).toBe('All 1 Jira issues done');
+
+    expect(checkRunReads()).toBe(1);
+    const verdictEvt = events.find((e) => e.obj['evt'] === 'verdict');
+    expect(verdictEvt).toBeDefined();
+    expect(verdictEvt!.obj['phase']).toBe('completed');
+    expect(verdictEvt!.obj['trigger']).toBe('webhook');
+    expect(verdictEvt!.obj['conclusion']).toBe('success');
+  });
+
+  it('Jira outage with a prior real verdict: replicates conclusion, output AND external_id', async () => {
+    const { deps, posted, patched } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        latestRuns: [
+          {
+            id: 9,
+            external_id: 'previous-fingerprint',
+            conclusion: 'success',
+            output: PRIOR_OUTPUT,
+          },
+        ],
+      },
+      { error: new JiraUnavailableError('down', 'unreachable') },
+    );
+
+    await evaluatePullRequest(deps, PULL, 'webhook');
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!['status']).toBe('in_progress');
+    expect(patched).toHaveLength(1);
+    const patch = patched[0]!;
+    expect(patch['status']).toBe('completed');
+    expect(patch['conclusion']).toBe('success');
+    // Reusing the old fingerprint keeps future poll dedupe working.
+    expect(patch['external_id']).toBe('previous-fingerprint');
+    const output = patch['output'] as { title: string; summary: string };
+    expect(output.title).toBe(PRIOR_OUTPUT.title);
+    expect(output.summary).toContain(PRIOR_OUTPUT.summary);
+    expect(output.summary).toContain(OUTAGE_NOTE);
+  });
+
+  it('Jira outage with only a `skipped` prior run: NOT replicated — completes as the unreachable failure', async () => {
+    const { deps, posted, patched } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        // Replicating a skipped scope marker would bypass the scope gate:
+        // GitHub treats skipped as satisfying a required check.
+        latestRuns: [{ id: 9, external_id: `skipped|${cfg.configHash}`, conclusion: 'skipped' }],
+      },
+      { error: new JiraUnavailableError('down', 'unreachable') },
+    );
+
+    await evaluatePullRequest(deps, PULL, 'webhook');
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!['status']).toBe('in_progress');
+    expect(patched).toHaveLength(1);
+    const patch = patched[0]!;
+    expect(patch['conclusion']).toBe('failure');
+    expect((patch['output'] as { title: string }).title).toBe(
+      'Jira unreachable — cannot verify referenced issues',
+    );
+  });
+
+  it('Jira auth failure on a fresh SHA: completes with the jira_auth_failed verdict, logged at error', async () => {
+    const { deps, posted, patched, events } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        latestRuns: [],
       },
       { error: new JiraAuthError('Jira rejected credentials (401)') },
     );
 
     await evaluatePullRequest(deps, PULL, 'webhook');
 
-    expect(posted).toHaveLength(0);
-    expect(checkRunReads()).toBe(0);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!['status']).toBe('in_progress');
+    expect(patched).toHaveLength(1);
+    const patch = patched[0]!;
+    expect(patch['status']).toBe('completed');
+    expect(patch['conclusion']).toBe('failure');
+    expect((patch['output'] as { title: string }).title).toBe(
+      'Jira authentication failed — cannot verify referenced issues',
+    );
     const authEvt = events.find((e) => e.obj['evt'] === 'jira_auth_failed');
     expect(authEvt).toBeDefined();
     expect(authEvt!.level).toBe('error');
     // Config failure must not be misfiled as an outage.
     expect(events.some((e) => e.obj['evt'] === 'jira_degraded')).toBe(false);
+  });
+
+  it('Jira auth failure with a prior real verdict: replicates it (still logging at error)', async () => {
+    const { deps, patched, events } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        latestRuns: [
+          {
+            id: 9,
+            external_id: 'previous-fingerprint',
+            conclusion: 'failure',
+            output: PRIOR_OUTPUT,
+          },
+        ],
+      },
+      { error: new JiraAuthError('Jira rejected credentials (401)') },
+    );
+
+    await evaluatePullRequest(deps, PULL, 'webhook');
+
+    expect(patched).toHaveLength(1);
+    const patch = patched[0]!;
+    expect(patch['conclusion']).toBe('failure');
+    expect(patch['external_id']).toBe('previous-fingerprint');
+    expect((patch['output'] as { summary: string }).summary).toContain(OUTAGE_NOTE);
+    expect(events.find((e) => e.obj['evt'] === 'jira_auth_failed')?.level).toBe('error');
+  });
+
+  it('unexpected throw after the in_progress POST: completes as an internal-error failure, then rethrows', async () => {
+    const { deps, posted, patched } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        latestRuns: [],
+      },
+      { error: new Error('boom: not a Jira error') },
+    );
+
+    await expect(evaluatePullRequest(deps, PULL, 'webhook')).rejects.toThrow(
+      'boom: not a Jira error',
+    );
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!['status']).toBe('in_progress');
+    // The run must never be stranded at in_progress on a required check.
+    expect(patched).toHaveLength(1);
+    const patch = patched[0]!;
+    expect(patch['status']).toBe('completed');
+    expect(patch['conclusion']).toBe('failure');
+    expect((patch['output'] as { title: string }).title).toBe(
+      'jira-merge-lock internal error — use Re-run',
+    );
+  });
+
+  it("trigger 'poll' never posts an in_progress run (create-only completed POST)", async () => {
+    const { deps, posted, patched } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        latestRuns: [],
+      },
+      {
+        outcomes: [
+          { key: 'PRJ-1', outcome: 'found', statusName: 'Closed', statusCategoryKey: 'done' },
+        ],
+      },
+    );
+
+    await evaluatePullRequest(deps, PULL, 'poll');
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!['status']).toBe('completed');
+    expect(posted.some((p) => p['status'] === 'in_progress')).toBe(false);
+    expect(patched).toHaveLength(0);
+  });
+
+  it('out of scope: no in_progress run is ever posted (scope gate precedes any write)', async () => {
+    const { deps, posted, patched, jiraCalls } = makeDeps({
+      branchRules: OUT_OF_SCOPE_RULES,
+      latestRuns: [{ id: 9, external_id: 'fp-old', conclusion: 'failure' }],
+    });
+
+    await evaluatePullRequest(deps, PULL, 'webhook');
+
+    // The only write is the superseding skipped run — posted completed.
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!['status']).toBe('completed');
+    expect(posted[0]!['conclusion']).toBe('skipped');
+    expect(posted.some((p) => p['status'] === 'in_progress')).toBe(false);
+    expect(patched).toHaveLength(0);
+    expect(jiraCalls()).toBe(0);
   });
 });
 

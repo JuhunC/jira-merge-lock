@@ -97,6 +97,26 @@ function nockCheckRunPost(capture: (body: any) => void): nock.Scope {
     .reply(201, { id: 1 });
 }
 
+/** Live evaluations POST an in_progress run first; the reply id feeds the
+ * completing PATCH below. */
+function nockInProgressPost(capture: (body: any) => void): nock.Scope {
+  return nock(GH)
+    .post(`/repos/${OWNER}/${REPO}/check-runs`, (body) => {
+      capture(body);
+      return true;
+    })
+    .reply(201, { id: 777 });
+}
+
+function nockCheckRunPatch(id: number, capture: (body: any) => void): nock.Scope {
+  return nock(GH)
+    .patch(`/repos/${OWNER}/${REPO}/check-runs/${id}`, (body) => {
+      capture(body);
+      return true;
+    })
+    .reply(200, { id });
+}
+
 function nockJiraIssue(key: string, statusName: string, categoryKey: string): nock.Scope {
   return nock(JIRA)
     .get(`/rest/api/2/issue/${key}`)
@@ -114,7 +134,7 @@ afterEach(() => {
 });
 
 describe('pull_request webhook evaluation', () => {
-  it('posts a failure check run when a referenced issue is not done', async () => {
+  it('shows in_progress immediately, then completes as failure when a referenced issue is not done', async () => {
     const probot = await makeProbot();
     nockToken();
     nockBranchRules(IN_SCOPE_RULES);
@@ -122,8 +142,12 @@ describe('pull_request webhook evaluation', () => {
     nockJiraIssue('PRJ-1', 'In Progress', 'indeterminate');
     nockJiraIssue('PRJ-2', 'Closed', 'done');
     nockCheckRunsRead(HEAD_SHA, []);
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
     let body: any;
-    const post = nockCheckRunPost((b) => {
+    const patch = nockCheckRunPatch(777, (b) => {
       body = b;
     });
 
@@ -134,8 +158,12 @@ describe('pull_request webhook evaluation', () => {
     } as any);
 
     expect(post.isDone()).toBe(true);
-    expect(body.name).toBe('jira-merge-lock');
-    expect(body.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.name).toBe('jira-merge-lock');
+    expect(inProgress.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.status).toBe('in_progress');
+    expect(inProgress.output.title).toBe('Verifying referenced Jira issues…');
+
+    expect(patch.isDone()).toBe(true);
     expect(body.status).toBe('completed');
     expect(body.conclusion).toBe('failure');
     expect(body.external_id).toMatch(/^[0-9a-f]{64}$/);
@@ -144,7 +172,7 @@ describe('pull_request webhook evaluation', () => {
     expect(body.output.summary).toContain('In Progress');
   });
 
-  it('posts a success check run when every referenced issue is done (synchronize)', async () => {
+  it('completes as success when every referenced issue is done (synchronize)', async () => {
     const probot = await makeProbot();
     nockToken();
     nockBranchRules(IN_SCOPE_RULES);
@@ -152,8 +180,12 @@ describe('pull_request webhook evaluation', () => {
     nockJiraIssue('PRJ-1', 'Closed', 'done');
     nockJiraIssue('PRJ-2', 'Resolved', 'done');
     nockCheckRunsRead(SYNC_HEAD_SHA, []);
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
     let body: any;
-    const post = nockCheckRunPost((b) => {
+    const patch = nockCheckRunPatch(777, (b) => {
       body = b;
     });
 
@@ -164,17 +196,22 @@ describe('pull_request webhook evaluation', () => {
     } as any);
 
     expect(post.isDone()).toBe(true);
-    expect(body.head_sha).toBe(SYNC_HEAD_SHA);
+    expect(inProgress.head_sha).toBe(SYNC_HEAD_SHA);
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
+    expect(body.status).toBe('completed');
     expect(body.conclusion).toBe('success');
     expect(body.output.title).toBe('All 2 Jira issues done');
   });
 
-  it('out-of-scope base branch: no check run is posted', async () => {
+  it('out-of-scope base branch: no check run is posted — not even in_progress', async () => {
     const probot = await makeProbot();
     nockToken();
     nockBranchRules(OUT_OF_SCOPE_RULES);
     // postSkippedRun reads the latest run; none exists -> noop, never POST.
     nockCheckRunsRead(HEAD_SHA, []);
+    // Catches ANY check-run POST (in_progress included): the scope gate runs
+    // before the first write.
     const post = nockCheckRunPost(() => {});
 
     await probot.receive({
@@ -186,7 +223,7 @@ describe('pull_request webhook evaluation', () => {
     expect(post.isDone()).toBe(false);
   });
 
-  it('matching fingerprint on the latest run: no write', async () => {
+  it('matching fingerprint on the latest run: live re-event still runs in_progress + PATCH with the same fingerprint', async () => {
     const probot = await makeProbot();
     const outcomes: JiraIssueOutcome[] = [
       { key: 'PRJ-1', outcome: 'found', statusName: 'Closed', statusCategoryKey: 'done' },
@@ -202,7 +239,14 @@ describe('pull_request webhook evaluation', () => {
     nockCheckRunsRead(HEAD_SHA, [
       { id: 9, external_id: expected.fingerprint, conclusion: 'success' },
     ]);
-    const post = nockCheckRunPost(() => {});
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
+    let body: any;
+    const patch = nockCheckRunPatch(777, (b) => {
+      body = b;
+    });
 
     await probot.receive({
       name: 'pull_request',
@@ -210,18 +254,29 @@ describe('pull_request webhook evaluation', () => {
       payload: fixture('pull_request.opened.json'),
     } as any);
 
-    expect(post.isDone()).toBe(false);
+    // The silent fingerprint dedupe is poll-only: a live event ALWAYS shows
+    // progress and completes, even when nothing changed.
+    expect(post.isDone()).toBe(true);
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
+    expect(body.status).toBe('completed');
+    expect(body.conclusion).toBe('success');
+    expect(body.external_id).toBe(expected.fingerprint);
   });
 
-  it('Jira outage on a never-verified SHA: posts the fail-closed run', async () => {
+  it('Jira outage on a never-verified SHA: completes with the fail-closed verdict', async () => {
     const probot = await makeProbot();
     nockToken();
     nockBranchRules(IN_SCOPE_RULES);
     nockCommits(['PRJ-1: solo change']);
     nock(JIRA).get('/rest/api/2/issue/PRJ-1').query({ fields: 'status' }).reply(500, {});
     nockCheckRunsRead(HEAD_SHA, []);
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
     let body: any;
-    const post = nockCheckRunPost((b) => {
+    const patch = nockCheckRunPatch(777, (b) => {
       body = b;
     });
 
@@ -232,21 +287,36 @@ describe('pull_request webhook evaluation', () => {
     } as any);
 
     expect(post.isDone()).toBe(true);
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
+    expect(body.status).toBe('completed');
     expect(body.conclusion).toBe('failure');
     expect(body.output.title).toBe('Jira unreachable — cannot verify referenced issues');
     expect(body.external_id).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('Jira outage with an existing run on the SHA: keeps the last verdict, no write', async () => {
+  it('Jira outage with an existing verdict on the SHA: replicates it onto the completed run', async () => {
     const probot = await makeProbot();
     nockToken();
     nockBranchRules(IN_SCOPE_RULES);
     nockCommits(['PRJ-1: solo change']);
     nock(JIRA).get('/rest/api/2/issue/PRJ-1').query({ fields: 'status' }).reply(500, {});
     nockCheckRunsRead(HEAD_SHA, [
-      { id: 9, external_id: 'previous-fingerprint', conclusion: 'failure' },
+      {
+        id: 9,
+        external_id: 'previous-fingerprint',
+        conclusion: 'failure',
+        output: { title: 'Blocked: 1 of 1 Jira issues not done', summary: 'the prior table' },
+      },
     ]);
-    const post = nockCheckRunPost(() => {});
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
+    let body: any;
+    const patch = nockCheckRunPatch(777, (b) => {
+      body = b;
+    });
 
     await probot.receive({
       name: 'pull_request',
@@ -254,7 +324,20 @@ describe('pull_request webhook evaluation', () => {
       payload: fixture('pull_request.opened.json'),
     } as any);
 
-    expect(post.isDone()).toBe(false);
+    expect(post.isDone()).toBe(true);
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
+    expect(body.status).toBe('completed');
+    // The in_progress run cannot be left pending, so the prior verdict is
+    // replicated: same conclusion, same output, and crucially the same
+    // external_id so future fingerprint dedupe keeps working.
+    expect(body.conclusion).toBe('failure');
+    expect(body.external_id).toBe('previous-fingerprint');
+    expect(body.output.title).toBe('Blocked: 1 of 1 Jira issues not done');
+    expect(body.output.summary).toContain('the prior table');
+    expect(body.output.summary).toContain(
+      '_Jira could not be consulted during this re-check — showing the last verified result._',
+    );
   });
 });
 
@@ -269,8 +352,12 @@ describe('check_run.rerequested', () => {
     nockCommits(['PRJ-1: finished work']);
     nockJiraIssue('PRJ-1', 'Closed', 'done');
     nockCheckRunsRead(HEAD_SHA, []);
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
     let body: any;
-    const post = nockCheckRunPost((b) => {
+    const patch = nockCheckRunPatch(777, (b) => {
       body = b;
     });
 
@@ -282,7 +369,10 @@ describe('check_run.rerequested', () => {
 
     expect(resolvePulls.isDone()).toBe(true);
     expect(post.isDone()).toBe(true);
-    expect(body.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
+    expect(body.status).toBe('completed');
     expect(body.conclusion).toBe('success');
     expect(body.output.title).toBe('All 1 Jira issues done');
   });

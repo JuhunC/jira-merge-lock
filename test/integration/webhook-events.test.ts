@@ -101,13 +101,24 @@ function nockCheckRunsRead(sha: string, runs: unknown[]): nock.Scope {
     .reply(200, { total_count: runs.length, check_runs: runs });
 }
 
-function nockCheckRunPost(capture: (body: any) => void): nock.Scope {
+/** Live evaluations POST an in_progress run first; the reply id feeds the
+ * completing PATCH below. */
+function nockInProgressPost(capture: (body: any) => void): nock.Scope {
   return nock(GH)
     .post(`/repos/${OWNER}/${REPO}/check-runs`, (body) => {
       capture(body);
       return true;
     })
-    .reply(201, { id: 1 });
+    .reply(201, { id: 777 });
+}
+
+function nockCheckRunPatch(id: number, capture: (body: any) => void): nock.Scope {
+  return nock(GH)
+    .patch(`/repos/${OWNER}/${REPO}/check-runs/${id}`, (body) => {
+      capture(body);
+      return true;
+    })
+    .reply(200, { id });
 }
 
 function nockJiraIssue(key: string, statusName: string, categoryKey: string): nock.Scope {
@@ -173,8 +184,12 @@ describe('merge_group.checks_requested', () => {
     nockCommits(['PRJ-1: finished work']);
     nockJiraIssue('PRJ-1', 'Closed', 'done');
     nockCheckRunsRead(MG_SHA, []);
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
     let body: any;
-    const post = nockCheckRunPost((b) => {
+    const patch = nockCheckRunPatch(777, (b) => {
       body = b;
     });
 
@@ -187,8 +202,11 @@ describe('merge_group.checks_requested', () => {
     expect(pullFetch.isDone()).toBe(true);
     expect(post.isDone()).toBe(true);
     // The verdict is computed from the PR but posted on the queue's temp SHA.
-    expect(body.head_sha).toBe(MG_SHA);
-    expect(body.name).toBe('jira-merge-lock');
+    expect(inProgress.head_sha).toBe(MG_SHA);
+    expect(inProgress.name).toBe('jira-merge-lock');
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
+    expect(body.status).toBe('completed');
     expect(body.conclusion).toBe('success');
     expect(nock.pendingMocks()).toEqual([]);
   });
@@ -203,10 +221,11 @@ describe('merge_group.checks_requested', () => {
     nockCommits(['PRJ-1: finished work']);
     nockJiraIssue('PRJ-1', 'Closed', 'done');
     nockCheckRunsRead(MG_SHA, []);
-    let body: any;
-    const post = nockCheckRunPost((b) => {
-      body = b;
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
     });
+    const patch = nockCheckRunPatch(777, () => {});
 
     await probot.receive({
       name: 'merge_group',
@@ -218,7 +237,8 @@ describe('merge_group.checks_requested', () => {
 
     expect(pullFetch.isDone()).toBe(true);
     expect(post.isDone()).toBe(true);
-    expect(body.head_sha).toBe(MG_SHA);
+    expect(inProgress.head_sha).toBe(MG_SHA);
+    expect(patch.isDone()).toBe(true);
     expect(nock.pendingMocks()).toEqual([]);
   });
 
@@ -257,8 +277,12 @@ describe('pull_request.edited', () => {
     nockCommits(['PRJ-1: finished work']);
     nockJiraIssue('PRJ-1', 'Closed', 'done');
     nockCheckRunsRead(HEAD_SHA, []);
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
     let body: any;
-    const post = nockCheckRunPost((b) => {
+    const patch = nockCheckRunPatch(777, (b) => {
       body = b;
     });
 
@@ -271,7 +295,9 @@ describe('pull_request.edited', () => {
     } as any);
 
     expect(post.isDone()).toBe(true);
-    expect(body.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
     expect(body.conclusion).toBe('success');
     expect(nock.pendingMocks()).toEqual([]);
   });
@@ -300,8 +326,12 @@ describe('check_suite.rerequested', () => {
     nockCommits(['PRJ-1: finished work']);
     nockJiraIssue('PRJ-1', 'Closed', 'done');
     nockCheckRunsRead(HEAD_SHA, []);
+    let inProgress: any;
+    const post = nockInProgressPost((b) => {
+      inProgress = b;
+    });
     let body: any;
-    const post = nockCheckRunPost((b) => {
+    const patch = nockCheckRunPatch(777, (b) => {
       body = b;
     });
 
@@ -325,7 +355,9 @@ describe('check_suite.rerequested', () => {
     } as any);
 
     expect(post.isDone()).toBe(true);
-    expect(body.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.head_sha).toBe(HEAD_SHA);
+    expect(inProgress.status).toBe('in_progress');
+    expect(patch.isDone()).toBe(true);
     expect(body.conclusion).toBe('success');
     expect(nock.pendingMocks()).toEqual([]);
   });

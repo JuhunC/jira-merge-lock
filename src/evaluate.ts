@@ -196,10 +196,29 @@ export function buildVerdictFromOutcomes(
 }
 
 export function buildErrorVerdict(
-  kind: 'jira_unreachable' | 'too_many_commits',
+  kind: 'jira_unreachable' | 'too_many_commits' | 'jira_auth_failed',
   cfg: AppConfig,
   meta?: { totalCommits?: number },
 ): Verdict {
+  if (kind === 'jira_auth_failed') {
+    return {
+      conclusion: 'failure',
+      issues: [],
+      title: 'Jira authentication failed — cannot verify referenced issues',
+      summary: withHomepage(
+        [
+          "Jira rejected this app's credentials, so the issues referenced by this pull request cannot be verified.",
+          '',
+          'This is a configuration failure of the jira-merge-lock deployment, not a problem with this pull request — an operator must fix the `JIRA_*` configuration (auth method, credentials, base URL). Developers cannot resolve this from the PR.',
+          '',
+          'Once the credentials are fixed, re-run this check or wait for the automatic re-check.',
+        ],
+        cfg,
+      ),
+      fingerprint: sha256(`jira_auth_failed|${cfg.configHash}`),
+    };
+  }
+
   if (kind === 'jira_unreachable') {
     return {
       conclusion: 'failure',

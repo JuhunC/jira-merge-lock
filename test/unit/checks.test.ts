@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { findLatestCheckRun, postCheckRun, postSkippedRun } from '../../src/checks.js';
+import {
+  completeCheckRun,
+  findLatestCheckRun,
+  postCheckRun,
+  postInProgressRun,
+  postSkippedRun,
+} from '../../src/checks.js';
 import { loadConfig, testEnv } from '../../src/config.js';
 import type { OctokitLike, Verdict } from '../../src/types.js';
 
 const LIST_ROUTE = 'GET /repos/{owner}/{repo}/commits/{ref}/check-runs';
 const CREATE_ROUTE = 'POST /repos/{owner}/{repo}/check-runs';
+const PATCH_ROUTE = 'PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}';
 
 const cfg = loadConfig(testEnv());
 
@@ -51,12 +58,25 @@ const verdict: Verdict = {
 describe('findLatestCheckRun', () => {
   it('queries with check_name, app_id and filter=latest on the head SHA', async () => {
     const { octokit, calls } = makeOctokit({
-      [LIST_ROUTE]: { check_runs: [{ external_id: 'fp-1', conclusion: 'failure' }] },
+      [LIST_ROUTE]: {
+        check_runs: [
+          {
+            external_id: 'fp-1',
+            conclusion: 'failure',
+            output: { title: 'Blocked: 1 of 1 Jira issues not done', summary: 'the table' },
+          },
+        ],
+      },
     });
 
     const result = await findLatestCheckRun(octokit, ref);
 
-    expect(result).toEqual({ externalId: 'fp-1', conclusion: 'failure' });
+    expect(result).toEqual({
+      externalId: 'fp-1',
+      conclusion: 'failure',
+      title: 'Blocked: 1 of 1 Jira issues not done',
+      summary: 'the table',
+    });
     expect(calls).toEqual([
       {
         route: LIST_ROUTE,
@@ -80,12 +100,97 @@ describe('findLatestCheckRun', () => {
 
   it('maps a missing external_id to null', async () => {
     const { octokit } = makeOctokit({
-      [LIST_ROUTE]: { check_runs: [{ conclusion: 'success' }] },
+      [LIST_ROUTE]: { check_runs: [{ conclusion: 'success', output: { title: 't', summary: 's' } }] },
     });
     expect(await findLatestCheckRun(octokit, ref)).toEqual({
       externalId: null,
       conclusion: 'success',
+      title: 't',
+      summary: 's',
     });
+  });
+
+  it('maps missing output (old runs) to null title/summary', async () => {
+    const { octokit } = makeOctokit({
+      [LIST_ROUTE]: { check_runs: [{ external_id: 'fp-2', conclusion: 'success' }] },
+    });
+    expect(await findLatestCheckRun(octokit, ref)).toEqual({
+      externalId: 'fp-2',
+      conclusion: 'success',
+      title: null,
+      summary: null,
+    });
+  });
+
+  it('maps output with null fields to null title/summary', async () => {
+    const { octokit } = makeOctokit({
+      [LIST_ROUTE]: {
+        check_runs: [
+          { external_id: 'fp-3', conclusion: 'failure', output: { title: null, summary: null } },
+        ],
+      },
+    });
+    expect(await findLatestCheckRun(octokit, ref)).toEqual({
+      externalId: 'fp-3',
+      conclusion: 'failure',
+      title: null,
+      summary: null,
+    });
+  });
+});
+
+describe('postInProgressRun', () => {
+  it('creates an in_progress run with the static output and returns its id', async () => {
+    const { octokit, calls } = makeOctokit({ [CREATE_ROUTE]: { id: 777 } });
+
+    const id = await postInProgressRun(octokit, ref);
+
+    expect(id).toBe(777);
+    expect(calls).toEqual([
+      {
+        route: CREATE_ROUTE,
+        params: {
+          owner: 'acme',
+          repo: 'widgets',
+          name: cfg.checkName,
+          head_sha: 'head000',
+          status: 'in_progress',
+          output: {
+            title: 'Verifying referenced Jira issues…',
+            summary:
+              "Scanning commit messages for issue keys and checking each issue's status in Jira.",
+          },
+        },
+      },
+    ]);
+  });
+});
+
+describe('completeCheckRun', () => {
+  it('PATCHes the run to completed with conclusion, external_id and output', async () => {
+    const { octokit, calls } = makeOctokit({ [PATCH_ROUTE]: { id: 777 } });
+
+    await completeCheckRun(octokit, ref, 777, {
+      conclusion: 'success',
+      externalId: 'fp-done',
+      title: 'All 1 Jira issues done',
+      summary: 'the table',
+    });
+
+    expect(calls).toEqual([
+      {
+        route: PATCH_ROUTE,
+        params: {
+          owner: 'acme',
+          repo: 'widgets',
+          check_run_id: 777,
+          status: 'completed',
+          conclusion: 'success',
+          external_id: 'fp-done',
+          output: { title: 'All 1 Jira issues done', summary: 'the table' },
+        },
+      },
+    ]);
   });
 });
 
