@@ -6,10 +6,9 @@
 
 services:
   jira-merge-lock:
-    # Replace OWNER with the GitHub org/user that owns this repository.
     # The tag pins the semver MAJOR (":1") — you get minor/patch updates on
     # pull without breaking changes. Pin ":1.2.3" for full reproducibility.
-    image: ghcr.io/OWNER/jira-merge-lock:1
+    image: ghcr.io/juhunc/jira-merge-lock:1
     env_file: .env
     # Bound to loopback on purpose: the webhook endpoint must be exposed to
     # GitHub via a public HTTPS reverse proxy (nginx/Caddy/Traefik/etc.)

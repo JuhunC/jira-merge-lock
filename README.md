@@ -28,10 +28,9 @@ There is no database; state lives in GitHub's own check runs. Restarts are free.
 
 ## Setup
 
-> **Placeholders used throughout:** `OWNER` = the GitHub org/user that owns
-> this repository (image lives at `ghcr.io/OWNER/jira-merge-lock`);
-> `YOUR-DEPLOYMENT-HOST` = the public HTTPS hostname your container is served
-> behind. Replace both consistently.
+> **Placeholder used throughout:** `YOUR-DEPLOYMENT-HOST` = the public HTTPS
+> hostname your container is served behind. The image lives at
+> `ghcr.io/juhunc/jira-merge-lock`.
 
 ### 1. Create the GitHub App from the manifest
 
@@ -59,7 +58,7 @@ the app logs a loud warning at auto-configure time if it detects
 ### 3. Deploy the container
 
 Grab `docker-compose.yml` and `.env.example` from the
-[latest release](https://github.com/OWNER/jira-merge-lock/releases/latest),
+[latest release](https://github.com/JuhunC/jira-merge-lock/releases/latest),
 copy `.env.example` to `.env`, fill it in, then:
 
 ```sh
@@ -222,7 +221,7 @@ End-to-end smoke test against a sandbox org, using the bundled fake Jira and a
    **GitHub Release** for the tag (publishing it triggers
    `.github/workflows/release.yml`).
 2. The workflow runs the test suite, then builds and pushes a multi-arch
-   (amd64/arm64) image to `ghcr.io/OWNER/jira-merge-lock` tagged `X.Y.Z`,
+   (amd64/arm64) image to `ghcr.io/juhunc/jira-merge-lock` tagged `X.Y.Z`,
    `X.Y`, `X`, and a commit-sha tag — consumers pinning the major (`:1`) get
    compatible updates automatically. It also attaches `docker-compose.yml`
    and `.env.example` to the release as the consumer artifacts.

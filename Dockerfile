@@ -18,7 +18,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/lib ./lib
 
-LABEL org.opencontainers.image.source="https://github.com/OWNER/jira-merge-lock"
+LABEL org.opencontainers.image.source="https://github.com/JuhunC/jira-merge-lock"
 LABEL org.opencontainers.image.description="GitHub App that blocks PR merges until every referenced Jira issue is done"
 LABEL org.opencontainers.image.licenses="MIT"
 
