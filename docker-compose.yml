@@ -6,9 +6,10 @@
 
 services:
   jira-merge-lock:
-    # The tag pins the semver MAJOR (":1") — you get minor/patch updates on
-    # pull without breaking changes. Pin ":1.2.3" for full reproducibility.
-    image: ghcr.io/juhunc/jira-merge-lock:1
+    # The tag pins the semver MAJOR (":0") — you get minor/patch updates on
+    # pull without breaking changes. Pin ":0.1.0" for full reproducibility.
+    # Bump to ":1" once v1.0.0 is released.
+    image: ghcr.io/juhunc/jira-merge-lock:0
     env_file: .env
     # Bound to loopback on purpose: the webhook endpoint must be exposed to
     # GitHub via a public HTTPS reverse proxy (nginx/Caddy/Traefik/etc.)

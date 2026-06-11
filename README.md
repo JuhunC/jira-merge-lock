@@ -57,9 +57,10 @@ the app logs a loud warning at auto-configure time if it detects
 
 ### 3. Deploy the container
 
-Grab `docker-compose.yml` and `.env.example` from the
+Grab `docker-compose.yml` and `.env.example` (attached as
+`default.env.example` — GitHub release assets cannot start with a dot) from the
 [latest release](https://github.com/JuhunC/jira-merge-lock/releases/latest),
-copy `.env.example` to `.env`, fill it in, then:
+save it as `.env`, fill it in, then:
 
 ```sh
 docker compose up -d
