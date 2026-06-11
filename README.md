@@ -29,6 +29,13 @@ Two mechanisms keep the verdict current, with different check-run lifecycles:
   by fingerprint (no in-progress phase), so steady-state cycles are almost pure
   reads.
 
+Both paths fail closed when Jira cannot be consulted: **any evaluation while
+Jira is unreachable or rejects the app's credentials fails the check** with an
+explanatory message — a Jira outage is always visibly blocking. Verdicts
+recover automatically within one poll interval of Jira returning, and the
+fingerprint dedupe means an extended outage writes each PR's failure once, not
+once per poll cycle.
+
 There is no database; state lives in GitHub's own check runs. Restarts are free.
 
 ## Setup
@@ -168,7 +175,7 @@ Structured JSON logs; one line per noteworthy event:
 | `poll_done` | end-of-cycle budget — `installations, repos_scanned, repos_pruned, prs, jira_fetches, duration_ms`. A `poll_overrun` warning means raise `POLL_INTERVAL_SECONDS`. |
 | `ruleset_autoconfig` | a ruleset was updated — `action: injected` (entry written) or `repinned` (integration id fixed). |
 | `installation_coverage_warning` | the installation is on "selected repositories" — prefix rulesets may target repos the app cannot see (see troubleshooting). |
-| `jira_degraded` / `jira_auth_failed` | Jira outage (verdicts kept per SHA) / credential failure (no check writes at all). |
+| `jira_degraded` / `jira_auth_failed` | Jira outage / credential failure — every evaluation fails the check (fail closed) until Jira works again; dedupe caps it at one failure write per PR per outage. |
 
 ### Troubleshooting
 
@@ -176,7 +183,7 @@ Structured JSON logs; one line per noteworthy event:
 |---|---|
 | “A PR is locked — why?” | Open the `jira-merge-lock` check run on the PR: its summary table lists every referenced issue, its Jira status, and whether it blocks (with links into Jira). Fix: move the issues to a done status, then hit **Re-run** on the check or wait ≤ `POLL_INTERVAL_SECONDS`. |
 | Nothing happens on PRs | Is the app installed on the org (and on **all** repositories)? Does an org ruleset name start with `RULESET_NAME_PREFIX`? Is that ruleset's enforcement **Active** (Disabled/Evaluate rulesets are out of scope by design)? Does it actually target the PR's repo and base branch? |
-| Every PR blocked with “Jira unreachable — cannot verify” | Jira credentials or connectivity: check `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: SHAs that already have a verdict keep it during an outage — only never-verified pushes fail closed. |
+| Every PR blocked with “Jira unreachable — cannot verify” (or “Jira authentication failed”) | Jira credentials or connectivity: check `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: this is the designed fail-closed behavior — every evaluation during a Jira outage (or credential failure) fails the check; verdicts recover automatically within one poll interval of Jira coming back, and dedupe writes each PR's failure once per outage, not per cycle. |
 | PRs in some repo permanently unmergeable, app logs show nothing for it | Installation-coverage mismatch: a prefix ruleset targets a repo the app is not installed on. Install on **All repositories** (setup step 2). |
 | `poll_cycle_failed` mentions `api.github.com` although `GHE_HOST` is set | The variable is not reaching the container. Check the startup log line `github_api_base` (it states the exact API target), and `docker compose exec jira-merge-lock env \| grep GHE`. Note: `docker-compose.sample.yml` does **not** read `.env` — set `GHE_HOST` in its `environment:` block. With the plain `docker-compose.yml`, put it in `.env`. Restart after changing either. |
 

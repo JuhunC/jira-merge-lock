@@ -51,8 +51,8 @@ export type JiraIssueOutcome =
   | { key: string; outcome: 'forbidden' }; // 403 or 200-without-status-field; BLOCKING (cannot verify)
 
 /** Jira is unreachable / rate-limit-exhausted. Carries no information about
- * issue state — callers apply the keep-last-verdict / fail-closed-on-new-SHA
- * policy. */
+ * issue state — evaluations fail closed with an explanatory check message
+ * until Jira can be consulted again. */
 export class JiraUnavailableError extends Error {
   constructor(
     message: string,

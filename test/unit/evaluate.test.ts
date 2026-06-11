@@ -336,8 +336,12 @@ describe('buildErrorVerdict', () => {
     const v = buildErrorVerdict('jira_unreachable', cfg);
     expect(v.conclusion).toBe('failure');
     expect(v.title).toBe('Jira unreachable — cannot verify referenced issues');
-    expect(v.summary).toContain('keep');
+    // Merging is blocked; the check re-runs automatically and manually, and
+    // self-heals once Jira returns. No keep-last-verdict promise anywhere.
+    expect(v.summary.toLowerCase()).toContain('merging is blocked');
+    expect(v.summary.toLowerCase()).toContain('re-run');
     expect(v.summary.toLowerCase()).toContain('heals itself');
+    expect(v.summary.toLowerCase()).not.toContain('keep');
     expect(v.issues).toEqual([]);
     expect(v.fingerprint).toMatch(/^[0-9a-f]{64}$/);
   });

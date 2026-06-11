@@ -226,11 +226,9 @@ export function buildErrorVerdict(
       title: 'Jira unreachable — cannot verify referenced issues',
       summary: withHomepage(
         [
-          'Jira could not be reached, so the issues referenced by this pull request cannot be verified.',
+          'Jira could not be reached, so the issues referenced by this pull request could not be verified — merging is blocked until they can be.',
           '',
-          'This failure is posted only for commits that have never been verified — commits that already carry a verdict keep it, because an outage says nothing about issue state.',
-          '',
-          'No action is needed: the check re-evaluates automatically and heals itself once Jira is reachable again (or re-run it manually).',
+          'No action is needed on this pull request: the check re-runs automatically every poll cycle (and can be re-run manually at any time) and heals itself as soon as Jira is reachable again.',
         ],
         cfg,
       ),

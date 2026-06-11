@@ -102,7 +102,8 @@ requests outside any matching ruleset are not blocked by this check.</p>
 <ul>
   <li>Any referenced Jira issue whose status is <strong>not done</strong> (per the list above).</li>
   <li>Any referenced issue that <strong>cannot be verified</strong> (for example, access denied in Jira).</li>
-  <li>A <strong>Jira outage</strong> at the moment a newly pushed commit is first evaluated.</li>
+  <li>A <strong>Jira outage</strong> — while Jira is unreachable, every evaluation fails
+      until Jira is reachable again; the check then recovers automatically.</li>
   <li>Pull requests too large to enumerate completely (more than 250 commits) — split the PR.</li>
 </ul>
 

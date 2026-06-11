@@ -47,45 +47,12 @@ interface Completion {
   summary: string;
 }
 
-const OUTAGE_NOTE =
-  '_Jira could not be consulted during this re-check — showing the last verified result._';
-
 function completionFromVerdict(verdict: Verdict): Completion {
   return {
     conclusion: verdict.conclusion,
     externalId: verdict.fingerprint,
     title: verdict.title,
     summary: verdict.summary,
-  };
-}
-
-interface PriorVerdict {
-  externalId: string | null;
-  conclusion: 'success' | 'failure';
-  title: string | null;
-  summary: string | null;
-}
-
-/** Only a prior run that concluded success|failure is a real verdict. A
- * `skipped` run is a scope marker — GitHub treats skipped as satisfying a
- * required check, so replicating it during an outage would let a newly
- * in-scope, never-verified SHA merge. Treat it (and anything else) as "no
- * verdict": fail closed instead. */
-function priorVerdictOf(latest: LatestRun): PriorVerdict | null {
-  if (latest === null) return null;
-  if (latest.conclusion !== 'success' && latest.conclusion !== 'failure') return null;
-  return { ...latest, conclusion: latest.conclusion };
-}
-
-/** Invariant-3 replication: complete the in_progress run with the prior run's
- * verdict, appending an outage note. Reusing the prior external_id keeps
- * future fingerprint dedupe working once Jira heals. */
-function replicatedCompletion(prior: PriorVerdict): Completion {
-  return {
-    conclusion: prior.conclusion,
-    externalId: prior.externalId ?? '',
-    title: prior.title ?? 'Last verified result',
-    summary: prior.summary ? `${prior.summary}\n\n${OUTAGE_NOTE}` : OUTAGE_NOTE,
   };
 }
 
@@ -158,27 +125,29 @@ export async function evaluatePullRequest(
     return;
   }
 
-  // Single up-front read — both paths use it (poll: fingerprint dedupe; live:
-  // outage/auth replication), keeping the at-most-one-read property. Must
-  // happen BEFORE the live in_progress POST, which would otherwise become the
-  // "latest" run itself and hide the prior verdict.
+  // Single up-front read, before any write — the poll path uses it for
+  // fingerprint dedupe. Error verdicts have stable fingerprints, so an
+  // extended Jira outage writes each PR's failure ONCE and every subsequent
+  // poll cycle skips the write.
   const latest = await findLatestCheckRun(octokit, { ...checkRef, appId: cfg.appId });
 
   if (trigger !== 'poll') {
-    await evaluateLive(deps, pull, trigger, checkRef, latest, startedAt);
+    await evaluateLive(deps, pull, trigger, checkRef, startedAt);
     return;
   }
   await evaluatePoll(deps, pull, checkRef, latest, startedAt);
 }
 
 /** Live path: in_progress immediately, completed (PATCH) after the Jira
- * lookup. Every code path after the in_progress POST completes the run. */
+ * lookup. Every code path after the in_progress POST completes the run.
+ * When Jira cannot be consulted (outage or credential failure) the run is
+ * completed as a FAILURE with an explanatory verdict — "Jira down" is always
+ * visibly blocking; prior verdicts are never kept or replicated. */
 async function evaluateLive(
   deps: PipelineDeps,
   pull: PullRef,
   trigger: EvaluationTrigger,
   checkRef: CheckRefWithSha,
-  latest: LatestRun,
   startedAt: number,
 ): Promise<void> {
   const { octokit, cfg, log } = deps;
@@ -194,28 +163,23 @@ async function evaluateLive(
       blocking = result.verdict.issues.filter((i) => i.blocking).map((i) => i.key);
       completion = completionFromVerdict(result.verdict);
     } catch (err) {
-      const prior = priorVerdictOf(latest);
       if (err instanceof JiraUnavailableError) {
-        if (prior !== null) {
-          log.info(
-            {
-              evt: 'jira_degraded',
-              action: 'replicated_last_verdict',
-              owner: pull.owner,
-              repo: pull.repo,
-              pr: pull.pullNumber,
-              head_sha: checkRef.headSha,
-              kind: err.kind,
-            },
-            'Jira unavailable — replicating the last verdict on this SHA',
-          );
-          completion = replicatedCompletion(prior);
-        } else {
-          completion = completionFromVerdict(buildErrorVerdict('jira_unreachable', cfg));
-        }
+        log.info(
+          {
+            evt: 'jira_degraded',
+            action: 'fail_closed',
+            owner: pull.owner,
+            repo: pull.repo,
+            pr: pull.pullNumber,
+            head_sha: checkRef.headSha,
+            kind: err.kind,
+          },
+          'Jira unavailable — completing the check as the fail-closed failure',
+        );
+        completion = completionFromVerdict(buildErrorVerdict('jira_unreachable', cfg));
       } else if (err instanceof JiraAuthError) {
-        // Config failure, not an outage — but the in_progress run must still
-        // be completed, so (unlike the poll path) we cannot simply not write.
+        // Config failure, not an outage — still fails the check, with a
+        // verdict that points the operator at the JIRA_* configuration.
         log.error(
           {
             evt: 'jira_auth_failed',
@@ -224,12 +188,9 @@ async function evaluateLive(
             pr: pull.pullNumber,
             err: err.message,
           },
-          'Jira rejected credentials — completing the check from the last verdict or fail-closed',
+          'Jira rejected credentials — completing the check as the auth-failure verdict',
         );
-        completion =
-          prior !== null
-            ? replicatedCompletion(prior)
-            : completionFromVerdict(buildErrorVerdict('jira_auth_failed', cfg));
+        completion = completionFromVerdict(buildErrorVerdict('jira_auth_failed', cfg));
       } else {
         throw err;
       }
@@ -280,9 +241,12 @@ async function evaluateLive(
   );
 }
 
-/** Poll path: exactly the historical silent behavior — fingerprint dedupe,
- * create-only completed POSTs, keep-last-verdict (no write) on Jira outage,
- * no write on Jira auth failure. */
+/** Poll path: silent create-only completed POSTs with fingerprint dedupe.
+ * When Jira cannot be consulted (outage or credential failure) the
+ * corresponding fail-closed error verdict is POSTED — no keep-last-verdict.
+ * Error verdicts have stable fingerprints, so the dedupe below caps an
+ * extended outage at one write per PR (a completed POST also supersedes any
+ * stranded in_progress run on the SHA). */
 async function evaluatePoll(
   deps: PipelineDeps,
   pull: PullRef,
@@ -298,7 +262,8 @@ async function evaluatePoll(
     ({ verdict, keys } = await computeVerdict(deps, pull));
   } catch (err) {
     if (err instanceof JiraAuthError) {
-      // Config failure, not an outage — never flip org-wide checks over it.
+      // Config failure, not an outage — fails the check all the same, with a
+      // verdict that points the operator at the JIRA_* configuration.
       log.error(
         {
           evt: 'jira_auth_failed',
@@ -307,30 +272,22 @@ async function evaluatePoll(
           pr: pull.pullNumber,
           err: err.message,
         },
-        'Jira rejected credentials — skipping check write',
+        'Jira rejected credentials — posting the auth-failure verdict',
       );
-      return;
-    }
-    if (err instanceof JiraUnavailableError) {
-      // A `skipped` run is a scope marker, not a verdict — GitHub treats
-      // skipped as satisfying a required check, so keeping it would let a
-      // newly in-scope, never-verified SHA merge for the whole outage.
-      // Treat it like "no run": fail closed below.
-      if (latest !== null && latest.conclusion !== 'skipped') {
-        log.info(
-          {
-            evt: 'jira_degraded',
-            action: 'kept_last_verdict',
-            owner: pull.owner,
-            repo: pull.repo,
-            pr: pull.pullNumber,
-            head_sha: checkRef.headSha,
-            kind: err.kind,
-          },
-          'Jira unavailable — keeping last verdict on this SHA',
-        );
-        return;
-      }
+      verdict = buildErrorVerdict('jira_auth_failed', cfg);
+    } else if (err instanceof JiraUnavailableError) {
+      log.info(
+        {
+          evt: 'jira_degraded',
+          action: 'fail_closed',
+          owner: pull.owner,
+          repo: pull.repo,
+          pr: pull.pullNumber,
+          head_sha: checkRef.headSha,
+          kind: err.kind,
+        },
+        'Jira unavailable — posting the fail-closed failure verdict',
+      );
       verdict = buildErrorVerdict('jira_unreachable', cfg);
     } else {
       throw err;

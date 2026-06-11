@@ -2,18 +2,22 @@
  * Pipeline-level policy tests: evaluatePullRequest is driven directly with
  * structural fakes (OctokitLike + a stub JiraClient) — no Probot, no HTTP.
  *
- * Pins the degraded-mode and scope policies, split by trigger:
+ * Pins the degraded-mode and scope policies, split by trigger.
+ *
+ * Outage policy (both paths): whenever an evaluation cannot consult Jira
+ * (JiraUnavailableError or JiraAuthError), the check completes/posts as a
+ * FAILURE with an explanatory verdict — no keep-last-verdict, no replication
+ * of prior verdicts. "Jira down" is always visibly blocking.
  *
  * Poll path (trigger 'poll' — silent, create-only, fingerprint-deduped):
- *  - Jira outage + latest run `skipped`  -> fail closed (skipped is a scope
- *    marker, not a verdict; GitHub treats skipped as passing a required check)
- *  - Jira outage + latest run is a real verdict -> keep it, zero writes
- *  - JiraAuthError (config failure)      -> zero writes, error log only
+ *  - Jira outage, any prior state        -> posts the jira_unreachable failure
+ *  - Jira outage, stranded in_progress run -> superseded by the posted failure
+ *  - Jira outage, failure already posted -> fingerprint dedupe, zero writes
+ *  - JiraAuthError (config failure)      -> posts the jira_auth_failed failure
  *
  * Live path (any other trigger — in_progress immediately, completed via PATCH):
- *  - Jira outage + prior real verdict    -> replicate it (incl. external_id)
- *  - Jira outage + prior `skipped` only  -> NOT replicated; unreachable failure
- *  - JiraAuthError on a fresh SHA        -> jira_auth_failed failure completion
+ *  - Jira outage (prior verdict or not)  -> jira_unreachable failure completion
+ *  - JiraAuthError (prior verdict or not)-> jira_auth_failed failure completion
  *  - unexpected throw                    -> completed as failure, then rethrown
  *    (an in_progress run may never be stranded on a required check)
  *
@@ -206,12 +210,12 @@ describe('pipeline policy (poll path): Jira outage (JiraUnavailableError)', () =
       'Jira unreachable — cannot verify referenced issues',
     );
     expect(patched).toHaveLength(0);
-    // The single up-front read serves both the degraded path and the write step.
+    // The single up-front read serves the fingerprint-dedupe write step.
     expect(checkRunReads()).toBe(1);
   });
 
   it.each(['failure', 'success'] as const)(
-    'latest run is a real verdict (%s): keeps it — zero writes, kept_last_verdict logged',
+    'latest run is a real verdict (%s): NOT kept — posts the jira_unreachable failure',
     async (conclusion) => {
       const { deps, posted, patched, events } = makeDeps(
         {
@@ -224,13 +228,20 @@ describe('pipeline policy (poll path): Jira outage (JiraUnavailableError)', () =
 
       await evaluatePullRequest(deps, PULL, 'poll');
 
-      expect(posted).toHaveLength(0);
+      expect(posted).toHaveLength(1);
+      const body = posted[0]!;
+      expect(body['status']).toBe('completed');
+      expect(body['conclusion']).toBe('failure');
+      expect((body['output'] as { title: string }).title).toBe(
+        'Jira unreachable — cannot verify referenced issues',
+      );
+      expect(body['external_id']).not.toBe('previous-fingerprint');
       expect(patched).toHaveLength(0);
-      const kept = events.find((e) => e.obj['evt'] === 'jira_degraded');
-      expect(kept).toBeDefined();
-      expect(kept!.level).toBe('info');
-      expect(kept!.obj['action']).toBe('kept_last_verdict');
-      expect(kept!.obj['kind']).toBe('timeout');
+      const degraded = events.find((e) => e.obj['evt'] === 'jira_degraded');
+      expect(degraded).toBeDefined();
+      expect(degraded!.level).toBe('info');
+      expect(degraded!.obj['action']).toBe('fail_closed');
+      expect(degraded!.obj['kind']).toBe('timeout');
     },
   );
 
@@ -250,17 +261,67 @@ describe('pipeline policy (poll path): Jira outage (JiraUnavailableError)', () =
     expect(posted[0]!['conclusion']).toBe('failure');
     expect(patched).toHaveLength(0);
   });
+
+  it('REGRESSION: latest run is a stranded in_progress run (conclusion null) — a completed failure POST supersedes it', async () => {
+    // The old keep-last condition was `latest !== null && conclusion !== 'skipped'`:
+    // an UNCOMPLETED in_progress run (externalId null, conclusion null) passed
+    // it and was "kept" forever, stranding the PR at in-progress for the whole
+    // outage. With keep-last removed the failure POST must happen.
+    const { deps, posted, patched } = makeDeps(
+      {
+        branchRules: IN_SCOPE_RULES,
+        commits: ['PRJ-1: solo change'],
+        latestRuns: [{ id: 9, external_id: null, conclusion: null }],
+      },
+      { error: new JiraUnavailableError('down', 'unreachable') },
+    );
+
+    await evaluatePullRequest(deps, PULL, 'poll');
+
+    expect(posted).toHaveLength(1);
+    const body = posted[0]!;
+    expect(body['status']).toBe('completed');
+    expect(body['conclusion']).toBe('failure');
+    expect((body['output'] as { title: string }).title).toBe(
+      'Jira unreachable — cannot verify referenced issues',
+    );
+    expect(patched).toHaveLength(0);
+  });
+
+  it('extended outage: the failure is written ONCE — the next cycle dedupes on the fingerprint', async () => {
+    const github: FakeGithub = {
+      branchRules: IN_SCOPE_RULES,
+      commits: ['PRJ-1: solo change'],
+      latestRuns: [],
+    };
+    const { deps, posted, patched } = makeDeps(github, {
+      error: new JiraUnavailableError('down'),
+    });
+
+    await evaluatePullRequest(deps, PULL, 'poll');
+
+    expect(posted).toHaveLength(1);
+    const fingerprint = posted[0]!['external_id'] as string;
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+
+    // Next poll cycle, Jira still down: GitHub now returns the failure run we
+    // just wrote — the stable error fingerprint must dedupe the second write.
+    github.latestRuns = [{ id: 10, external_id: fingerprint, conclusion: 'failure' }];
+    await evaluatePullRequest(deps, PULL, 'poll');
+
+    expect(posted).toHaveLength(1);
+    expect(patched).toHaveLength(0);
+  });
 });
 
 describe('pipeline policy (poll path): Jira credential failure (JiraAuthError)', () => {
-  it('never writes a check run — logs jira_auth_failed at error and returns', async () => {
+  it('posts the jira_auth_failed failure run — logged at error', async () => {
     const { deps, posted, patched, checkRunReads, events } = makeDeps(
       {
         branchRules: IN_SCOPE_RULES,
         commits: ['PRJ-1: solo change'],
-        // A run exists; a regression into the outage branch would "keep" it
-        // silently — a regression into the verdict path would POST. Both are
-        // distinguishable from the correct zero-write behavior.
+        // A prior verdict exists — it must NOT be kept: an auth failure fails
+        // the check just like an outage does.
         latestRuns: [{ id: 9, external_id: 'previous-fingerprint', conclusion: 'failure' }],
       },
       { error: new JiraAuthError('Jira rejected credentials (401)') },
@@ -268,7 +329,14 @@ describe('pipeline policy (poll path): Jira credential failure (JiraAuthError)',
 
     await evaluatePullRequest(deps, PULL, 'poll');
 
-    expect(posted).toHaveLength(0);
+    expect(posted).toHaveLength(1);
+    const body = posted[0]!;
+    expect(body['status']).toBe('completed');
+    expect(body['conclusion']).toBe('failure');
+    expect((body['output'] as { title: string }).title).toBe(
+      'Jira authentication failed — cannot verify referenced issues',
+    );
+    expect(body['external_id']).not.toBe('previous-fingerprint');
     expect(patched).toHaveLength(0);
     // Only the single up-front read — never more.
     expect(checkRunReads()).toBe(1);
@@ -282,8 +350,6 @@ describe('pipeline policy (poll path): Jira credential failure (JiraAuthError)',
 
 describe('pipeline policy (live path): in_progress lifecycle', () => {
   const PRIOR_OUTPUT = { title: 'All 1 Jira issues done', summary: 'the prior table' };
-  const OUTAGE_NOTE =
-    '_Jira could not be consulted during this re-check — showing the last verified result._';
 
   it('verdict completion: in_progress POST then PATCH carrying the verdict and fingerprint', async () => {
     const { deps, posted, patched, checkRunReads, events } = makeDeps(
@@ -325,8 +391,8 @@ describe('pipeline policy (live path): in_progress lifecycle', () => {
     expect(verdictEvt!.obj['conclusion']).toBe('success');
   });
 
-  it('Jira outage with a prior real verdict: replicates conclusion, output AND external_id', async () => {
-    const { deps, posted, patched } = makeDeps(
+  it('Jira outage with a prior success verdict: NOT replicated — completes as the unreachable failure', async () => {
+    const { deps, posted, patched, events } = makeDeps(
       {
         branchRules: IN_SCOPE_RULES,
         commits: ['PRJ-1: solo change'],
@@ -349,22 +415,24 @@ describe('pipeline policy (live path): in_progress lifecycle', () => {
     expect(patched).toHaveLength(1);
     const patch = patched[0]!;
     expect(patch['status']).toBe('completed');
-    expect(patch['conclusion']).toBe('success');
-    // Reusing the old fingerprint keeps future poll dedupe working.
-    expect(patch['external_id']).toBe('previous-fingerprint');
+    expect(patch['conclusion']).toBe('failure');
+    expect(patch['external_id']).toMatch(/^[0-9a-f]{64}$/);
+    expect(patch['external_id']).not.toBe('previous-fingerprint');
     const output = patch['output'] as { title: string; summary: string };
-    expect(output.title).toBe(PRIOR_OUTPUT.title);
-    expect(output.summary).toContain(PRIOR_OUTPUT.summary);
-    expect(output.summary).toContain(OUTAGE_NOTE);
+    expect(output.title).toBe('Jira unreachable — cannot verify referenced issues');
+    expect(output.summary).not.toContain(PRIOR_OUTPUT.summary);
+    const degraded = events.find((e) => e.obj['evt'] === 'jira_degraded');
+    expect(degraded).toBeDefined();
+    expect(degraded!.level).toBe('info');
+    expect(degraded!.obj['action']).toBe('fail_closed');
+    expect(degraded!.obj['kind']).toBe('unreachable');
   });
 
-  it('Jira outage with only a `skipped` prior run: NOT replicated — completes as the unreachable failure', async () => {
+  it('Jira outage with only a `skipped` prior run: completes as the unreachable failure', async () => {
     const { deps, posted, patched } = makeDeps(
       {
         branchRules: IN_SCOPE_RULES,
         commits: ['PRJ-1: solo change'],
-        // Replicating a skipped scope marker would bypass the scope gate:
-        // GitHub treats skipped as satisfying a required check.
         latestRuns: [{ id: 9, external_id: `skipped|${cfg.configHash}`, conclusion: 'skipped' }],
       },
       { error: new JiraUnavailableError('down', 'unreachable') },
@@ -410,7 +478,7 @@ describe('pipeline policy (live path): in_progress lifecycle', () => {
     expect(events.some((e) => e.obj['evt'] === 'jira_degraded')).toBe(false);
   });
 
-  it('Jira auth failure with a prior real verdict: replicates it (still logging at error)', async () => {
+  it('Jira auth failure with a prior real verdict: NOT replicated — completes as jira_auth_failed', async () => {
     const { deps, patched, events } = makeDeps(
       {
         branchRules: IN_SCOPE_RULES,
@@ -431,9 +499,13 @@ describe('pipeline policy (live path): in_progress lifecycle', () => {
 
     expect(patched).toHaveLength(1);
     const patch = patched[0]!;
+    expect(patch['status']).toBe('completed');
     expect(patch['conclusion']).toBe('failure');
-    expect(patch['external_id']).toBe('previous-fingerprint');
-    expect((patch['output'] as { summary: string }).summary).toContain(OUTAGE_NOTE);
+    expect(patch['external_id']).not.toBe('previous-fingerprint');
+    expect((patch['output'] as { title: string }).title).toBe(
+      'Jira authentication failed — cannot verify referenced issues',
+    );
+    expect((patch['output'] as { summary: string }).summary).not.toContain(PRIOR_OUTPUT.summary);
     expect(events.find((e) => e.obj['evt'] === 'jira_auth_failed')?.level).toBe('error');
   });
 

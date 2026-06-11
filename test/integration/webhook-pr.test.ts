@@ -295,7 +295,7 @@ describe('pull_request webhook evaluation', () => {
     expect(body.external_id).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('Jira outage with an existing verdict on the SHA: replicates it onto the completed run', async () => {
+  it('Jira outage with an existing verdict on the SHA: still completes as the unreachable failure', async () => {
     const probot = await makeProbot();
     nockToken();
     nockBranchRules(IN_SCOPE_RULES);
@@ -328,16 +328,13 @@ describe('pull_request webhook evaluation', () => {
     expect(inProgress.status).toBe('in_progress');
     expect(patch.isDone()).toBe(true);
     expect(body.status).toBe('completed');
-    // The in_progress run cannot be left pending, so the prior verdict is
-    // replicated: same conclusion, same output, and crucially the same
-    // external_id so future fingerprint dedupe keeps working.
+    // No keep-last / replication: ANY evaluation during a Jira outage fails
+    // closed, even when the SHA already carries a verdict.
     expect(body.conclusion).toBe('failure');
-    expect(body.external_id).toBe('previous-fingerprint');
-    expect(body.output.title).toBe('Blocked: 1 of 1 Jira issues not done');
-    expect(body.output.summary).toContain('the prior table');
-    expect(body.output.summary).toContain(
-      '_Jira could not be consulted during this re-check — showing the last verified result._',
-    );
+    expect(body.output.title).toBe('Jira unreachable — cannot verify referenced issues');
+    expect(body.output.summary).not.toContain('the prior table');
+    expect(body.external_id).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.external_id).not.toBe('previous-fingerprint');
   });
 });
 
