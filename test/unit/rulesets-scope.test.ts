@@ -277,7 +277,25 @@ describe('autoconfigureOrg', () => {
     expect(calls.filter((c) => c.route === detailRoute)).toHaveLength(2);
     expect(calls.filter((c) => c.route === putRoute)).toHaveLength(0);
     expect(logged(lines, 'error')).toHaveLength(0);
-    expect(logged(lines, 'info')).toHaveLength(0);
+    // exactly the discovery summary — no ruleset_autoconfig write events
+    const infos = logged(lines, 'info');
+    expect(infos).toHaveLength(1);
+    expect(infos[0]).toMatchObject({ evt: 'ruleset_discovery', matched: [converged.name] });
+  });
+
+  it('zero matching rulesets -> discovery info with empty matched + warn once per org', async () => {
+    const { log, lines } = fakeLog();
+    const { octokit } = fakeOctokit({ paginate: () => [] });
+
+    await autoconfigureOrg(octokit, 'lonely-org', cfg, log);
+    await autoconfigureOrg(octokit, 'lonely-org', cfg, log);
+
+    const discoveries = logged(lines, 'info').filter((l) => l['evt'] === 'ruleset_discovery');
+    expect(discoveries).toHaveLength(2);
+    expect(discoveries[0]).toMatchObject({ matched: [], prefix: cfg.rulesetNamePrefix });
+    // the loud misconfiguration warning fires once per org, not every cycle
+    const warns = logged(lines, 'warn').filter((l) => l['evt'] === 'ruleset_discovery_empty');
+    expect(warns).toHaveLength(1);
   });
 
   it('missing entry -> exactly one PUT with untouched fields, merged rules, no read-only fields', async () => {
@@ -328,9 +346,9 @@ describe('autoconfigureOrg', () => {
     ]);
 
     expect(logged(lines, 'error')).toHaveLength(0);
-    const infos = logged(lines, 'info');
-    expect(infos).toHaveLength(1);
-    expect(infos[0]).toMatchObject({ evt: 'ruleset_autoconfig', org: 'acme', ruleset: detail.name, action: 'injected' });
+    const writes = logged(lines, 'info').filter((l) => l['evt'] === 'ruleset_autoconfig');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ evt: 'ruleset_autoconfig', org: 'acme', ruleset: detail.name, action: 'injected' });
   });
 
   it('rules-undefined on the pre-decision re-fetch -> error log, no PUT', async () => {
@@ -391,7 +409,10 @@ describe('autoconfigureOrg', () => {
     await autoconfigureOrg(octokit, 'acme', cfg, log);
 
     expect(calls.filter((c) => c.route === putRoute)).toHaveLength(1);
-    expect(logged(lines, 'info')[0]).toMatchObject({ evt: 'ruleset_autoconfig', action: 'repinned' });
+    expect(logged(lines, 'info').filter((l) => l['evt'] === 'ruleset_autoconfig')[0]).toMatchObject({
+      evt: 'ruleset_autoconfig',
+      action: 'repinned',
+    });
   });
 });
 
