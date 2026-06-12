@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig, testEnv } from '../../src/config.js';
-import { extractJiraKeys } from '../../src/extract.js';
+import { extractJiraKeys, extractJiraKeySources } from '../../src/extract.js';
 
 const defaults = loadConfig(testEnv());
 
@@ -49,5 +49,30 @@ describe('extractJiraKeys', () => {
   it('is stateless across calls (no shared lastIndex)', () => {
     const msgs = ['PRJ-1 PRJ-2'];
     expect(extractJiraKeys(msgs, defaults)).toEqual(extractJiraKeys(msgs, defaults));
+  });
+});
+
+describe('extractJiraKeySources', () => {
+  it('maps each key to the FIRST commit that referenced it', () => {
+    const sources = extractJiraKeySources(
+      [
+        { sha: 'aaa111', message: 'PRJ-1: start' },
+        { sha: 'bbb222', message: 'PRJ-1 follow-up, also OPS-30' },
+        { sha: null, message: 'PRJ-9 from a sha-less entry' },
+      ],
+      defaults,
+    );
+    expect(sources.get('PRJ-1')).toBe('aaa111');
+    expect(sources.get('OPS-30')).toBe('bbb222');
+    expect(sources.has('PRJ-9')).toBe(false); // no sha to point at
+  });
+
+  it('applies the same project allowlist as extractJiraKeys', () => {
+    const cfg = loadConfig(testEnv({ JIRA_PROJECT_KEYS: 'PRJ' }));
+    const sources = extractJiraKeySources(
+      [{ sha: 'ccc333', message: 'PRJ-1 and OPS-2 and UTF-8' }],
+      cfg,
+    );
+    expect([...sources.keys()]).toEqual(['PRJ-1']);
   });
 });

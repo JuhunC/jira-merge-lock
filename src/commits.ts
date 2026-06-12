@@ -8,21 +8,25 @@ const PR_COMMITS_CAP = 250;
  * a `url` key, which defeats the plugin's normalization), so each "item" is a
  * whole page object holding a `commits` array. Normalize defensively: accept
  * either page objects or already-flattened commit objects. */
-function flattenCompareItems(items: unknown[]): Array<{ commit: { message: string } }> {
-  const commits: Array<{ commit: { message: string } }> = [];
+function flattenCompareItems(items: unknown[]): Array<{ sha?: unknown; commit: { message: string } }> {
+  const commits: Array<{ sha?: unknown; commit: { message: string } }> = [];
   for (const item of items) {
     const it = item as { commits?: unknown; commit?: unknown };
     if (it && Array.isArray(it.commits)) {
       for (const c of it.commits) {
         if (c && typeof (c as { commit?: { message?: unknown } }).commit?.message === 'string') {
-          commits.push(c as { commit: { message: string } });
+          commits.push(c as { sha?: unknown; commit: { message: string } });
         }
       }
     } else if (it && typeof (it.commit as { message?: unknown } | undefined)?.message === 'string') {
-      commits.push(it as { commit: { message: string } });
+      commits.push(it as { sha?: unknown; commit: { message: string } });
     }
   }
   return commits;
+}
+
+function toEntry(c: { sha?: unknown; commit: { message: string } }): { sha: string | null; message: string } {
+  return { sha: typeof c.sha === 'string' ? c.sha : null, message: c.commit.message };
 }
 
 export async function listPrCommitMessages(
@@ -37,10 +41,11 @@ export async function listPrCommitMessages(
     pull_number: pullNumber,
     per_page: 100,
   });
-  const messages = items.map((c) => (c as { commit: { message: string } }).commit.message);
+  const entries = items.map((c) => toEntry(c as { sha?: unknown; commit: { message: string } }));
+  const messages = entries.map((e) => e.message);
 
   if (items.length < PR_COMMITS_CAP) {
-    return { messages, complete: true, totalCommits: items.length };
+    return { messages, entries, complete: true, totalCommits: items.length };
   }
 
   const pr = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
@@ -51,10 +56,10 @@ export async function listPrCommitMessages(
   const trueCount: unknown = pr.data?.commits;
   if (typeof trueCount !== 'number') {
     // Cannot verify completeness — fail closed.
-    return { messages, complete: false, totalCommits: items.length };
+    return { messages, entries, complete: false, totalCommits: items.length };
   }
   if (trueCount <= PR_COMMITS_CAP) {
-    return { messages, complete: true, totalCommits: trueCount };
+    return { messages, entries, complete: true, totalCommits: trueCount };
   }
 
   const comparePages = await octokit.paginate('GET /repos/{owner}/{repo}/compare/{basehead}', {
@@ -64,10 +69,11 @@ export async function listPrCommitMessages(
     per_page: 100,
   });
   const compareCommits = flattenCompareItems(comparePages);
-  const compareMessages = compareCommits.map((c) => c.commit.message);
+  const compareEntries = compareCommits.map(toEntry);
 
   return {
-    messages: compareMessages,
+    messages: compareEntries.map((e) => e.message),
+    entries: compareEntries,
     complete: compareCommits.length >= trueCount,
     totalCommits: trueCount,
   };

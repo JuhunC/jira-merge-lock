@@ -61,7 +61,7 @@ function user(login: string, type = 'User'): { login: string; type: string } {
 }
 
 describe('countNonAuthorComments', () => {
-  it('counts non-author humans across all three sources', async () => {
+  it('counts non-author humans across all three sources with attribution', async () => {
     const { octokit } = makeOctokit({
       [ISSUE_COMMENTS]: () => [{ user: user('alice') }, { user: user('author') }],
       [REVIEW_COMMENTS]: () => [{ user: user('bob') }],
@@ -71,8 +71,16 @@ describe('countNonAuthorComments', () => {
         { user: user('dave'), body: '   ' },
       ],
     });
-    const { count } = await countNonAuthorComments(octokit, PULL, 10);
-    expect(count).toBe(3); // alice + bob + carol
+    const detail = await countNonAuthorComments(octokit, PULL);
+    expect(detail.count).toBe(3); // alice + bob + carol
+    expect(detail.counted).toEqual([
+      { login: 'alice', source: 'conversation comment' },
+      { login: 'bob', source: 'inline review comment' },
+      { login: 'carol', source: 'review' },
+    ]);
+    expect(detail.excludedAuthor).toBe(1);
+    expect(detail.excludedEmptyReviews).toBe(2);
+    expect(detail.truncated).toBe(false);
   });
 
   it('excludes the author (case-insensitive), bots, and authorless items', async () => {
@@ -87,23 +95,26 @@ describe('countNonAuthorComments', () => {
       [REVIEW_COMMENTS]: () => [],
       [REVIEWS]: () => [],
     });
-    const { count } = await countNonAuthorComments(octokit, PULL, 10);
-    expect(count).toBe(1);
+    const detail = await countNonAuthorComments(octokit, PULL);
+    expect(detail.count).toBe(1);
+    expect(detail.excludedAuthor).toBe(1);
+    expect(detail.excludedBots).toBe(1);
   });
 
-  it('stops at the threshold and skips later endpoints entirely', async () => {
+  it('consults every source (no early exit) and pages up to the cap', async () => {
+    const fullPage = Array.from({ length: 100 }, () => ({ user: user('alice') }));
     const { octokit, calls } = makeOctokit({
-      [ISSUE_COMMENTS]: () => [{ user: user('alice') }, { user: user('bob') }],
-      [REVIEW_COMMENTS]: () => {
-        throw new Error('must not be called once satisfied');
-      },
-      [REVIEWS]: () => {
-        throw new Error('must not be called once satisfied');
-      },
+      [ISSUE_COMMENTS]: () => fullPage, // always full -> hits the 3-page cap
+      [REVIEW_COMMENTS]: () => [{ user: user('bob') }],
+      [REVIEWS]: () => [],
     });
-    const { count } = await countNonAuthorComments(octokit, PULL, 2);
-    expect(count).toBe(2);
-    expect(calls.map((c) => c.route)).toEqual([ISSUE_COMMENTS]);
+    const detail = await countNonAuthorComments(octokit, PULL);
+    expect(detail.count).toBe(301); // 3 capped pages + bob
+    expect(detail.truncated).toBe(true);
+    const issuePages = calls.filter((c) => c.route === ISSUE_COMMENTS);
+    expect(issuePages).toHaveLength(3);
+    expect(issuePages.map((c) => c.params['page'])).toEqual([1, 2, 3]);
+    expect(calls.map((c) => c.route)).toContain(REVIEWS);
   });
 
   it('resolves the author via the PR endpoint when the ref does not carry it', async () => {
@@ -113,13 +124,9 @@ describe('countNonAuthorComments', () => {
       [REVIEW_COMMENTS]: () => [],
       [REVIEWS]: () => [],
     });
-    const { count, authorLogin } = await countNonAuthorComments(
-      octokit,
-      { ...PULL, authorLogin: undefined },
-      10,
-    );
-    expect(authorLogin).toBe('author');
-    expect(count).toBe(1);
+    const detail = await countNonAuthorComments(octokit, { ...PULL, authorLogin: undefined });
+    expect(detail.authorLogin).toBe('author');
+    expect(detail.count).toBe(1);
     expect(calls[0]!.route).toBe('GET /repos/{owner}/{repo}/pulls/{pull_number}');
   });
 });
@@ -127,20 +134,46 @@ describe('countNonAuthorComments', () => {
 describe('buildCommentVerdict', () => {
   const cfg = loadConfig(testEnv({ MIN_PR_COMMENTS: '2' }));
 
-  it('succeeds at/above the threshold with a count-capped stable fingerprint', () => {
-    const at = buildCommentVerdict(2, cfg);
-    const above = buildCommentVerdict(9, cfg);
+  function detailOf(
+    logins: string[],
+    extra?: Partial<import('../../src/comments.js').CommentCountDetail>,
+  ): import('../../src/comments.js').CommentCountDetail {
+    return {
+      count: logins.length,
+      authorLogin: 'author',
+      counted: logins.map((login) => ({ login, source: 'conversation comment' as const })),
+      excludedAuthor: 0,
+      excludedBots: 0,
+      excludedEmptyReviews: 0,
+      truncated: false,
+      ...extra,
+    };
+  }
+
+  it('succeeds at/above the threshold, lists who counted, capped fingerprint', () => {
+    const at = buildCommentVerdict(detailOf(['alice', 'bob']), cfg);
+    const above = buildCommentVerdict(detailOf(['alice', 'bob', 'carol']), cfg);
     expect(at.conclusion).toBe('success');
     expect(at.fingerprint).toBe('comments|success|2/2');
     expect(above.fingerprint).toBe(at.fingerprint); // more discussion ≠ rewrite
-    expect(at.title).toContain('≥2');
+    expect(at.title).toBe('Discussion requirement met — 2 comments from others (required: 2)');
+    expect(at.summary).toContain('**2** qualifying comments');
+    expect(at.summary).toContain('| 1 | alice | conversation comment |');
+    expect(at.summary).toContain('| 2 | bob | conversation comment |');
   });
 
-  it('fails below the threshold, fingerprint tracking the found count', () => {
-    const none = buildCommentVerdict(0, cfg);
-    const one = buildCommentVerdict(1, cfg);
+  it('fails below the threshold and explains the exclusions', () => {
+    const none = buildCommentVerdict(
+      detailOf([], { excludedAuthor: 3, excludedBots: 1, excludedEmptyReviews: 1 }),
+      cfg,
+    );
+    const one = buildCommentVerdict(detailOf(['alice']), cfg);
     expect(none.conclusion).toBe('failure');
     expect(none.fingerprint).toBe('comments|failure|0/2');
+    expect(none.summary).toContain('**No** qualifying comments');
+    expect(none.summary).toContain(
+      'Not counted: 3 comments from the PR author · 1 from bot account · 1 review without body text.',
+    );
     expect(one.fingerprint).toBe('comments|failure|1/2');
     expect(one.title).toBe(
       'Blocked: needs 2 comments from someone other than the author (found 1)',
@@ -150,9 +183,26 @@ describe('buildCommentVerdict', () => {
 
   it('uses singular wording for a threshold of 1', () => {
     const single = loadConfig(testEnv({ MIN_PR_COMMENTS: '1' }));
-    expect(buildCommentVerdict(0, single).title).toBe(
+    expect(buildCommentVerdict(detailOf([]), single).title).toBe(
       'Blocked: needs 1 comment from someone other than the author (found 0)',
     );
+  });
+
+  it('caps the listed users at 20 and notes truncated pagination', () => {
+    const many = detailOf(
+      Array.from({ length: 25 }, (_, i) => `user${i}`),
+      { truncated: true },
+    );
+    const v = buildCommentVerdict(many, cfg);
+    expect(v.summary).toContain('| 20 | user19 | conversation comment |');
+    expect(v.summary).not.toContain('| 21 |');
+    expect(v.summary).toContain('…and 5 more');
+    expect(v.summary).toContain('Listing truncated');
+  });
+
+  it('escapes markdown in logins', () => {
+    const v = buildCommentVerdict(detailOf(['evil|user']), cfg);
+    expect(v.summary).toContain('evil\\|user');
   });
 });
 
@@ -218,6 +268,8 @@ describe('evaluateCommentCheck', () => {
       [BRANCH_RULES]: () => IN_SCOPE_RULES,
       [CHECK_RUNS_READ]: () => ({ check_runs: [] }),
       [ISSUE_COMMENTS]: () => [{ user: user('alice') }],
+      [REVIEW_COMMENTS]: () => [],
+      [REVIEWS]: () => [],
       [CHECK_RUNS_POST]: (p) => {
         posted.push(p);
         return { id: 1 };
@@ -242,6 +294,8 @@ describe('evaluateCommentCheck', () => {
         check_runs: [{ external_id: 'comments|success|1/1', conclusion: 'success' }],
       }),
       [ISSUE_COMMENTS]: () => [{ user: user('alice') }],
+      [REVIEW_COMMENTS]: () => [],
+      [REVIEWS]: () => [],
       [CHECK_RUNS_POST]: (p) => {
         posted.push(p);
         return { id: 1 };
@@ -332,6 +386,8 @@ describe('evaluateAllChecks', () => {
         { sha: 'c1', commit: { message: 'no keys here' } },
       ],
       [ISSUE_COMMENTS]: () => [{ user: user('alice') }],
+      [REVIEW_COMMENTS]: () => [],
+      [REVIEWS]: () => [],
       [CHECK_RUNS_POST]: (p) => {
         posted.push(p);
         return { id: 1 };
@@ -404,6 +460,8 @@ describe('comment webhooks', () => {
       [BRANCH_RULES]: () => IN_SCOPE_RULES,
       [CHECK_RUNS_READ]: () => ({ check_runs: [] }),
       [ISSUE_COMMENTS]: () => [{ user: user('alice') }],
+      [REVIEW_COMMENTS]: () => [],
+      [REVIEWS]: () => [],
       [CHECK_RUNS_POST]: (p) => {
         posted.push(p);
         return { id: 9 };

@@ -49,6 +49,11 @@ PR conversation comments, inline review comments, and reviews with body text
 accounts never count; comments whose author GitHub no longer knows (deleted
 accounts) are skipped.
 
+The check run shows its **evidence**, not just the verdict: the found count and
+a table of who counted (user + source), plus what was excluded and why — e.g.
+`Not counted: 3 comments from the PR author · 1 from bot accounts` — so
+"I commented, why is it still blocked?" is answered on the PR itself.
+
 The comment check shares the Jira check's scope: auto-configure injects **both**
 required-check contexts into every prefix ruleset while the feature is on, and
 removes its own comment-check entry again when it is turned off (a required
@@ -267,7 +272,7 @@ environment. Start troubleshooting here before digging into logs.
 
 | Symptom | Check |
 |---|---|
-| “A PR is locked — why?” | Open the `merge-lock/jira-issue` check run on the PR: its summary table lists every referenced issue, its Jira status, and whether it blocks (with links into Jira). Fix: move the issues to a done status, then hit **Re-run** on the check or wait ≤ `POLL_INTERVAL_SECONDS`. |
+| “A PR is locked — why?” | Open the `merge-lock/jira-issue` check run on the PR: its summary table lists every referenced issue, its Jira status, whether it blocks (with links into Jira), and which commit first referenced it. Fix: move the issues to a done status, then hit **Re-run** on the check or wait ≤ `POLL_INTERVAL_SECONDS`. |
 | Nothing happens on PRs | Is the app installed on the org (and on **all** repositories)? Does an org ruleset name start with `RULESET_NAME_PREFIX`? Is that ruleset's enforcement **Active** (Disabled/Evaluate rulesets are out of scope by design)? Does it actually target the PR's repo and base branch? |
 | Every PR blocked with “Jira unreachable — cannot verify” (or “Jira authentication failed”) | Jira credentials or connectivity: check `/status` (shows the last Jira failure category) or `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: this is the designed fail-closed behavior — every evaluation during a Jira outage (or credential failure) fails the check; verdicts recover automatically within one poll interval of Jira coming back, and dedupe writes each PR's failure once per outage, not per cycle. |
 | PRs in some repo permanently unmergeable, app logs show nothing for it | Installation-coverage mismatch: a prefix ruleset targets a repo the app is not installed on. Install on **All repositories** (setup step 2). |

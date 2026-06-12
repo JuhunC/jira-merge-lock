@@ -117,6 +117,9 @@ export interface PullRef {
 
 export interface CommitListing {
   messages: string[];
+  /** Same commits with their SHAs (sha null when the API item lacked one) —
+   * lets the verdict table say which commit referenced each issue key. */
+  entries: Array<{ sha: string | null; message: string }>;
   /** false when the commit list could not be fully enumerated (e.g. >250
    * commits and the compare fallback was also truncated) — fail closed. */
   complete: boolean;

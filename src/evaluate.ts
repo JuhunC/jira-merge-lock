@@ -8,7 +8,10 @@ const SUMMARY_LIMIT = 60_000;
 const RECHECK_HINT =
   'Close/resolve the issues in Jira, then re-run this check — or wait for the automatic re-check.';
 
-const TABLE_HEADER = ['| Issue | Status | Blocking |', '| --- | --- | --- |'];
+const TABLE_HEADER = [
+  '| Issue | Status | Blocking | Referenced in |',
+  '| --- | --- | --- | --- |',
+];
 
 /**
  * Neutralize attacker-influenced text before it enters the Markdown summary.
@@ -99,21 +102,33 @@ function footer(cfg: AppConfig, commitCount: number): string {
   return lines.join('\n');
 }
 
-function renderRow(issue: EvaluatedIssue, jiraBaseUrl: string): string {
+function renderRow(
+  issue: EvaluatedIssue,
+  jiraBaseUrl: string,
+  keySources: Map<string, string> | undefined,
+): string {
   const link = `[${escapeMarkdown(issue.key)}](${jiraBaseUrl}/browse/${encodePathSegment(issue.key)})`;
   const status = escapeMarkdown(issue.note);
-  return `| ${link} | ${status} | ${issue.blocking ? '❌ Yes' : '✅ No'} |`;
+  const sha = keySources?.get(issue.key);
+  // SHAs come from the GitHub API (hex), but escape defensively anyway.
+  const source = sha ? `commit \`${escapeMarkdown(sha.slice(0, 7))}\`` : '—';
+  return `| ${link} | ${status} | ${issue.blocking ? '❌ Yes' : '✅ No'} | ${source} |`;
 }
 
 function assembleSummary(rows: string[], dropped: number, footerText: string): string {
   const lines = [...TABLE_HEADER, ...rows];
-  if (dropped > 0) lines.push(`| …and ${dropped} more issues | | |`);
+  if (dropped > 0) lines.push(`| …and ${dropped} more issues | | | |`);
   return `${lines.join('\n')}\n\n${footerText}`;
 }
 
-function renderSummary(issues: EvaluatedIssue[], cfg: AppConfig, commitCount: number): string {
+function renderSummary(
+  issues: EvaluatedIssue[],
+  cfg: AppConfig,
+  commitCount: number,
+  keySources: Map<string, string> | undefined,
+): string {
   const footerText = footer(cfg, commitCount);
-  const rows = issues.map((i) => renderRow(i, cfg.jira.baseUrl));
+  const rows = issues.map((i) => renderRow(i, cfg.jira.baseUrl, keySources));
 
   const full = assembleSummary(rows, 0, footerText);
   if (full.length <= SUMMARY_LIMIT) return full;
@@ -172,7 +187,7 @@ function zeroKeyVerdict(cfg: AppConfig, commitCount: number): Verdict {
 export function buildVerdictFromOutcomes(
   outcomes: JiraIssueOutcome[],
   cfg: AppConfig,
-  meta: { commitCount: number },
+  meta: { commitCount: number; keySources?: Map<string, string> },
 ): Verdict {
   if (outcomes.length === 0) return zeroKeyVerdict(cfg, meta.commitCount);
 
@@ -190,7 +205,7 @@ export function buildVerdictFromOutcomes(
     conclusion,
     issues,
     title,
-    summary: renderSummary(issues, cfg, meta.commitCount),
+    summary: renderSummary(issues, cfg, meta.commitCount, meta.keySources),
     fingerprint: verdictFingerprint(conclusion, outcomes, cfg.configHash),
   };
 }

@@ -8,7 +8,7 @@ import {
 import { buildCommentVerdict, countNonAuthorComments } from './comments.js';
 import { listPrCommitMessages } from './commits.js';
 import { buildErrorVerdict, buildVerdictFromOutcomes } from './evaluate.js';
-import { extractJiraKeys } from './extract.js';
+import { extractJiraKeys, extractJiraKeySources } from './extract.js';
 import type { AppConfig } from './config.js';
 import type { JiraClient } from './jira.js';
 import { isInScope, type ScopeCache } from './rulesets.js';
@@ -78,7 +78,10 @@ async function computeVerdict(
   const keys = extractJiraKeys(listing.messages, deps.cfg);
   const outcomes = await deps.jira.getIssueStatuses(keys, deps.jiraCycleCache);
   return {
-    verdict: buildVerdictFromOutcomes(outcomes, deps.cfg, { commitCount: listing.totalCommits }),
+    verdict: buildVerdictFromOutcomes(outcomes, deps.cfg, {
+      commitCount: listing.totalCommits,
+      keySources: extractJiraKeySources(listing.entries, deps.cfg),
+    }),
     keys,
   };
 }
@@ -352,8 +355,8 @@ export async function evaluateCommentCheck(
 
   let verdict: Verdict;
   try {
-    const { count } = await countNonAuthorComments(octokit, pull, cfg.minPrComments);
-    verdict = buildCommentVerdict(count, cfg);
+    const detail = await countNonAuthorComments(octokit, pull);
+    verdict = buildCommentVerdict(detail, cfg);
   } catch (err) {
     // Same invariant as the Jira check: a posted in_progress run is never
     // stranded — complete as failure, then rethrow for the caller's policy.

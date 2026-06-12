@@ -61,6 +61,11 @@ describe('listPrCommitMessages', () => {
 
     expect(result).toEqual({
       messages: ['PRJ-1: a', 'b', 'PRJ-2: c'],
+      entries: [
+        { sha: 'x', message: 'PRJ-1: a' },
+        { sha: 'x', message: 'b' },
+        { sha: 'x', message: 'PRJ-2: c' },
+      ],
       complete: true,
       totalCommits: 3,
     });

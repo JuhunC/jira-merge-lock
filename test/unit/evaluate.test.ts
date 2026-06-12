@@ -141,7 +141,7 @@ describe('buildVerdictFromOutcomes — summary rendering', () => {
       cfg,
       { commitCount: 7 },
     );
-    expect(v.summary).toContain('| Issue | Status | Blocking |');
+    expect(v.summary).toContain('| Issue | Status | Blocking | Referenced in |');
     expect(v.summary).toContain('[PRJ-1](https://jira.example.com/browse/PRJ-1)');
     expect(v.summary).toContain('[PRJ-2](https://jira.example.com/browse/PRJ-2)');
     expect(v.summary).toContain('| In Progress | ❌ Yes |');
@@ -152,6 +152,19 @@ describe('buildVerdictFromOutcomes — summary rendering', () => {
     expect(v.summary).toContain(
       'Close/resolve the issues in Jira, then re-run this check — or wait for the automatic re-check.',
     );
+  });
+
+  it('shows which commit first referenced each issue when keySources is provided', () => {
+    const v = buildVerdictFromOutcomes(
+      [found('PRJ-1', 'In Progress'), found('PRJ-2', 'Closed')],
+      cfg,
+      {
+        commitCount: 2,
+        keySources: new Map([['PRJ-1', 'a1b2c3d4e5f6a7b8']]),
+      },
+    );
+    expect(v.summary).toContain('| ❌ Yes | commit `a1b2c3d` |'); // short sha
+    expect(v.summary).toContain('| ✅ No | — |'); // PRJ-2 has no known source
   });
 
   it('truncates huge issue lists at 60000 chars, keeping title and footer', () => {
