@@ -1,13 +1,5 @@
 import type { AppConfig } from './config.js';
-
-export function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
+import { escapeHtml, SHARED_CSS } from './webui.js';
 
 /**
  * Developer-guidelines page served at GET /. Renders ONLY non-sensitive
@@ -29,9 +21,7 @@ export function renderHomepage(cfg: AppConfig): string {
   const statusList =
     cfg.doneStatuses.length > 0
       ? `<p>An issue counts as done when its Jira status (case-insensitive) is one of:</p>
-<ul>
-${cfg.doneStatuses.map((s) => `  <li><code>${escapeHtml(s)}</code></li>`).join('\n')}
-</ul>`
+<p>${cfg.doneStatuses.map((s) => `<code>${escapeHtml(s)}</code>`).join(' ')}</p>`
       : '';
 
   const categoryNote = cfg.doneUseCategory
@@ -53,77 +43,73 @@ ${cfg.doneStatuses.map((s) => `  <li><code>${escapeHtml(s)}</code></li>`).join('
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${checkName} — merge check guidelines</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    max-width: 44rem;
-    margin: 0 auto;
-    padding: 2rem 1.25rem 4rem;
-    line-height: 1.6;
-  }
-  h1 { font-size: 1.6rem; }
-  h2 { font-size: 1.2rem; margin-top: 2rem; }
-  code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.92em;
-    background: rgba(128, 128, 128, 0.16);
-    padding: 0.1em 0.35em;
-    border-radius: 4px;
-  }
-  li { margin: 0.3rem 0; }
-  dt { font-weight: 600; margin-top: 1rem; }
+<style>${SHARED_CSS}
+  dl.faq { margin: 0; }
+  dl.faq dt { font-weight: 600; margin-top: 1rem; }
+  dl.faq dd { margin: 0.25rem 0 0; }
+  section.card.unlock { border-color: var(--ok-border); }
+  section.card.unlock > h2 { border-bottom-color: var(--ok-border); }
 </style>
 </head>
 <body>
+<header>
 <h1><code>${checkName}</code> — why is my merge blocked?</h1>
-<p>This check scans every commit message in your pull request for Jira issue keys
+<p class="subtitle">This check scans every commit message in your pull request for Jira issue keys
 (like <code>PRJ-123</code>), looks each referenced issue up in Jira, and
 <strong>blocks the merge while any referenced issue is not done</strong>.
 It appears on your pull request as a required status check named <code>${checkName}</code>.</p>
+</header>
 
-<h2>How Jira issue keys are detected</h2>
-<p>Commit messages are matched against the pattern <code>${regex}</code>
-(word-boundary wrapped). Matched keys are uppercased and de-duplicated.</p>
-${allowlist}
-
-<h2>Which statuses unblock a merge</h2>
-${statusList}
-${categoryNote}
-
-<h2>Where this check applies</h2>
-<p>The check is enforced on repositories and branches covered by
-<strong>organization rulesets whose name starts with</strong> <code>${prefix}</code>
-(i.e. rulesets named <code>${prefix}*</code>). This page explains the naming
-convention only — it does not show live data about your organization. Pull
-requests outside any matching ruleset are not blocked by this check.</p>
-
-<h2>What blocks a merge</h2>
-<ul>
-  <li>Any referenced Jira issue whose status is <strong>not done</strong> (per the list above).</li>
-  <li>Any referenced issue that <strong>cannot be verified</strong> (for example, access denied in Jira).</li>
-  <li>A <strong>Jira outage</strong> — while Jira is unreachable, every evaluation fails
-      until Jira is reachable again; the check then recovers automatically.</li>
-  <li>Pull requests too large to enumerate completely (more than 250 commits) — split the PR.</li>
-</ul>
-
+<section class="card unlock">
 <h2>How to unlock</h2>
 <ol>
   <li>Close or resolve the blocking issues in Jira.</li>
   <li>Press <strong>Re-run</strong> on the <code>${checkName}</code> check in GitHub,
       ${unlockWait}</li>
 </ol>
+</section>
 
+<section class="card">
+<h2>What blocks a merge</h2>
+<ul>
+  <li>Any referenced Jira issue whose status is <strong>not done</strong> (per the list below).</li>
+  <li>Any referenced issue that <strong>cannot be verified</strong> (for example, access denied in Jira).</li>
+  <li>A <strong>Jira outage</strong> — while Jira is unreachable, every evaluation fails
+      until Jira is reachable again; the check then recovers automatically.</li>
+  <li>Pull requests too large to enumerate completely (more than 250 commits) — split the PR.</li>
+</ul>
+</section>
+
+<section class="card">
+<h2>Which statuses unblock a merge</h2>
+${statusList}
+${categoryNote}
+</section>
+
+<section class="card">
+<h2>How Jira issue keys are detected</h2>
+<p>Commit messages are matched against the pattern <code>${regex}</code>
+(word-boundary wrapped). Matched keys are uppercased and de-duplicated.</p>
+${allowlist}
+</section>
+
+<section class="card">
 <h2>Pull requests without Jira keys</h2>
 ${zeroKeyPolicy}
+</section>
 
-<h2>Deployment status</h2>
-<p>Live operational status of this deployment — GitHub and Jira connectivity and
-the most recent background poll cycle — is published at <a href="/status">/status</a>
-(machine-readable at <a href="/status.json">/status.json</a>).</p>
+<section class="card">
+<h2>Where this check applies</h2>
+<p>The check is enforced on repositories and branches covered by
+<strong>organization rulesets whose name starts with</strong> <code>${prefix}</code>
+(i.e. rulesets named <code>${prefix}*</code>). This page explains the naming
+convention only — it does not show live data about your organization. Pull
+requests outside any matching ruleset are not blocked by this check.</p>
+</section>
 
+<section class="card">
 <h2>FAQ</h2>
-<dl>
+<dl class="faq">
   <dt>A key was reported as “not found” and ignored — why?</dt>
   <dd>The detection pattern inevitably matches some strings that merely look
   like issue keys (for example <code>UTF-8</code>). A key that does not exist
@@ -135,6 +121,13 @@ the most recent background poll cycle — is published at <a href="/status">/sta
   its own required-check entry inside those rulesets. To opt a ruleset out of
   this check, an admin renames it so it no longer starts with <code>${prefix}</code>.</dd>
 </dl>
+</section>
+
+<footer>
+<p class="muted">Live deployment status — GitHub and Jira connectivity and the most
+recent background poll cycle — is published at <a href="/status">/status</a>
+(machine-readable at <a href="/status.json">/status.json</a>).</p>
+</footer>
 </body>
 </html>
 `;

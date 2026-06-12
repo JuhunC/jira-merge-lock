@@ -71,10 +71,16 @@ describe('renderStatusPage', () => {
     );
     const html = renderStatusPage(cfg, tracker.snapshot(), 1000);
     expect(html).toContain('succeeded');
-    expect(html).toContain('2 org installation(s)');
-    expect(html).toContain('3 <code>jira-merge-lock*</code> ruleset(s)');
-    expect(html).toContain('7 repo(s) scanned (4 pruned as out of scope)');
-    expect(html).toContain('11 open PR(s) evaluated');
+    expect(html).toContain('<div class="num">2</div><div class="label">org installations</div>');
+    expect(html).toContain(
+      '<div class="num">3</div><div class="label"><code>jira-merge-lock*</code> rulesets</div>',
+    );
+    expect(html).toContain('<div class="num">7</div><div class="label">repos scanned</div>');
+    expect(html).toContain(
+      '<div class="num">4</div><div class="label">repos pruned (out of scope)</div>',
+    );
+    expect(html).toContain('<div class="num">11</div><div class="label">open PRs evaluated</div>');
+    expect(html).toContain('<div class="num">5</div><div class="label">Jira lookups</div>');
     expect(html).toContain('850 ms');
   });
 

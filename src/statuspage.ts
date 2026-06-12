@@ -1,11 +1,11 @@
 import type { AppConfig } from './config.js';
-import { escapeHtml } from './homepage.js';
 import {
   deriveOverall,
   type ComponentHealth,
   type StatusSnapshot,
 } from './status.js';
 import type { JiraAuthMethod } from './types.js';
+import { escapeHtml, SHARED_CSS } from './webui.js';
 
 /**
  * Live operational status served at GET /status (HTML, auto-refreshing) and
@@ -47,7 +47,7 @@ function fmtAgo(ms: number): string {
 
 function fmtWhen(ts: number | null, now: number): string {
   if (ts === null) return 'never';
-  return `${fmtAgo(now - ts)} (${new Date(ts).toISOString()})`;
+  return `${fmtAgo(now - ts)} <span class="muted">(${new Date(ts).toISOString()})</span>`;
 }
 
 function fmtDuration(ms: number | null): string {
@@ -71,55 +71,57 @@ function badge(kind: 'ok' | 'bad' | 'neutral', label: string): string {
   return `<span class="badge ${kind}">${escapeHtml(label)}</span>`;
 }
 
-/** "connected · last success 12 s ago (…) · last failure never" */
-function connectionCell(c: ComponentHealth, now: number): string {
-  const parts: string[] = [];
+function stateBadge(c: ComponentHealth): string {
   switch (c.state) {
     case 'pending':
-      parts.push(badge('neutral', 'not yet attempted'));
-      break;
+      return badge('neutral', 'not yet attempted');
     case 'ok':
-      parts.push(badge('ok', 'connected'));
-      break;
+      return badge('ok', 'connected');
     case 'failed':
-      parts.push(badge('bad', 'failing'));
-      break;
+      return badge('bad', 'failing');
   }
-  if (c.lastOkAt !== null) parts.push(`last success ${fmtWhen(c.lastOkAt, now)}`);
-  if (c.lastFailAt !== null) {
-    const reason = c.lastFailReason ? ` — ${escapeHtml(c.lastFailReason)}` : '';
-    parts.push(`last failure ${fmtWhen(c.lastFailAt, now)}${reason}`);
-  }
-  return parts.join(' · ');
 }
 
-function pollCell(snap: StatusSnapshot, now: number): string {
-  const poll = snap.poll;
-  const parts: string[] = [];
+function failureCell(c: ComponentHealth, now: number): string {
+  if (c.lastFailAt === null) return '<span class="muted">never</span>';
+  const reason = c.lastFailReason ? ` — ${escapeHtml(c.lastFailReason)}` : '';
+  return `${fmtWhen(c.lastFailAt, now)}${reason}`;
+}
+
+function pollBadge(state: StatusSnapshot['poll']['state']): string {
+  switch (state) {
+    case 'pending':
+      return badge('neutral', 'no cycle yet');
+    case 'running':
+      return badge('neutral', 'running');
+    case 'ok':
+      return badge('ok', 'succeeded');
+    case 'failed':
+      return badge('bad', 'failed');
+  }
+}
+
+function pollCycleCell(poll: StatusSnapshot['poll'], now: number): string {
   switch (poll.state) {
     case 'pending':
-      parts.push(badge('neutral', 'no cycle has run yet'));
-      break;
+      return '<span class="muted">none yet</span>';
     case 'running':
-      parts.push(badge('neutral', 'running'), `started ${fmtWhen(poll.lastStartedAt, now)}`);
-      break;
+      return `started ${fmtWhen(poll.lastStartedAt, now)}`;
     case 'ok':
-      parts.push(
-        badge('ok', 'succeeded'),
-        `completed ${fmtWhen(poll.lastCompletedAt, now)}`,
-        `took ${fmtDuration(poll.lastDurationMs)}`,
-      );
-      break;
+      return `completed ${fmtWhen(poll.lastCompletedAt, now)} · took ${fmtDuration(poll.lastDurationMs)}`;
     case 'failed': {
       const reason = poll.lastFailReason ? ` — ${escapeHtml(poll.lastFailReason)}` : '';
-      parts.push(badge('bad', 'failed'), `${fmtWhen(poll.lastFailAt, now)}${reason}`);
-      if (poll.lastCompletedAt !== null) {
-        parts.push(`last successful cycle ${fmtWhen(poll.lastCompletedAt, now)}`);
-      }
-      break;
+      const lastGood =
+        poll.lastCompletedAt !== null
+          ? ` · last successful cycle ${fmtWhen(poll.lastCompletedAt, now)}`
+          : '';
+      return `failed ${fmtWhen(poll.lastFailAt, now)}${reason}${lastGood}`;
     }
   }
-  return parts.join(' · ');
+}
+
+function stat(value: number, label: string): string {
+  return `<div class="stat"><div class="num">${value}</div><div class="label">${label}</div></div>`;
 }
 
 export function renderStatusPage(
@@ -133,7 +135,7 @@ export function renderStatusPage(
 
   const webhookCell =
     snap.webhook.lastAt === null
-      ? `${badge('neutral', 'none since startup')} · GitHub sends events only when something changes — a quiet period is normal`
+      ? `${badge('neutral', 'none since startup')} <span class="muted">GitHub sends events only when something changes — a quiet period is normal.</span>`
       : `<code>${escapeHtml(snap.webhook.lastEvent ?? '')}</code> · ${fmtWhen(snap.webhook.lastAt, now)}`;
 
   const schedule =
@@ -143,10 +145,15 @@ export function renderStatusPage(
 
   const c = snap.poll.lastCounters;
   const coverage = c
-    ? `<dt>Last cycle covered</dt>
-  <dd>${c.installations} org installation(s) · ${c.rulesets} <code>${prefix}*</code> ruleset(s) discovered ·
-      ${c.repos_scanned} repo(s) scanned (${c.repos_pruned} pruned as out of scope) ·
-      ${c.prs} open PR(s) evaluated · ${c.jira_fetches} Jira lookup(s)</dd>`
+    ? `<p class="muted" style="margin-top:0.9rem">Last cycle covered:</p>
+<div class="stats">
+  ${stat(c.installations, 'org installations')}
+  ${stat(c.rulesets, `<code>${prefix}*</code> rulesets`)}
+  ${stat(c.repos_scanned, 'repos scanned')}
+  ${stat(c.repos_pruned, 'repos pruned (out of scope)')}
+  ${stat(c.prs, 'open PRs evaluated')}
+  ${stat(c.jira_fetches, 'Jira lookups')}
+</div>`
     : '';
 
   return `<!doctype html>
@@ -156,92 +163,86 @@ export function renderStatusPage(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="10">
 <title>${checkName} — status</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    max-width: 44rem;
-    margin: 0 auto;
-    padding: 2rem 1.25rem 4rem;
-    line-height: 1.6;
+<style>${SHARED_CSS}
+  .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .hero .subtitle { margin-bottom: 1rem; }
+  .badge.overall { font-size: 0.95rem; padding: 0.25em 0.9em; margin-top: 0.3rem; }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.55rem; margin-bottom: 0.85rem;
   }
-  h1 { font-size: 1.6rem; }
-  h2 { font-size: 1.2rem; margin-top: 2rem; }
-  code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.92em;
-    background: rgba(128, 128, 128, 0.16);
-    padding: 0.1em 0.35em;
-    border-radius: 4px;
+  .card-head h2 { font-size: 1.02rem; margin: 0; }
+  dl.rows { display: grid; grid-template-columns: 10.5rem 1fr; row-gap: 0.5rem; column-gap: 1rem; margin: 0; }
+  dl.rows dt { font-weight: 600; color: var(--muted); font-size: 0.9em; padding-top: 0.12em; }
+  dl.rows dd { margin: 0; overflow-wrap: anywhere; }
+  @media (max-width: 560px) {
+    dl.rows { grid-template-columns: 1fr; row-gap: 0.1rem; }
+    dl.rows dd { margin-bottom: 0.6rem; }
   }
-  dt { font-weight: 600; margin-top: 1rem; }
-  dd { margin-left: 0; }
-  .badge {
-    display: inline-block;
-    padding: 0.05em 0.6em;
-    border-radius: 999px;
-    font-weight: 600;
-    font-size: 0.9em;
-  }
-  .badge.ok { background: #1a7f37; color: #fff; }
-  .badge.bad { background: #cf222e; color: #fff; }
-  .badge.neutral { background: rgba(128, 128, 128, 0.3); }
-  .muted { opacity: 0.75; font-size: 0.92em; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.6rem; }
+  .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 0.55rem 0.75rem; }
+  .stat .num { font-size: 1.35rem; font-weight: 700; line-height: 1.25; }
+  .stat .label { color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
 </style>
 </head>
 <body>
-<h1><code>${checkName}</code> — deployment status</h1>
-<p>Overall: ${badge(OVERALL_CLASS[overall], OVERALL_LABEL[overall])}</p>
-<p class="muted">This page auto-refreshes every 10 seconds. Machine-readable version:
-<a href="/status.json">/status.json</a>. Merge-check guidelines: <a href="/">homepage</a>.</p>
+<div class="hero">
+  <div>
+    <h1><code>${checkName}</code> — deployment status</h1>
+    <p class="subtitle">Auto-refreshes every 10 seconds · <a href="/status.json">JSON</a> ·
+    <a href="/">merge-check guidelines</a></p>
+  </div>
+  <span class="badge overall ${OVERALL_CLASS[overall]}">${OVERALL_LABEL[overall]}</span>
+</div>
 
-<h2>GitHub</h2>
-<dl>
-  <dt>API target</dt>
-  <dd><code>${escapeHtml(githubApiTarget(cfg))}</code></dd>
-  <dt>Connection</dt>
-  <dd>${connectionCell(snap.github, now)}</dd>
-  <dt>Last webhook delivery received</dt>
-  <dd>${webhookCell}</dd>
+<section class="card">
+<div class="card-head"><h2>GitHub</h2>${stateBadge(snap.github)}</div>
+<dl class="rows">
+  <dt>API target</dt><dd><code>${escapeHtml(githubApiTarget(cfg))}</code></dd>
+  <dt>Last success</dt><dd>${fmtWhen(snap.github.lastOkAt, now)}</dd>
+  <dt>Last failure</dt><dd>${failureCell(snap.github, now)}</dd>
+  <dt>Last webhook</dt><dd>${webhookCell}</dd>
 </dl>
+</section>
 
-<h2>Jira</h2>
-<dl>
-  <dt>Base URL</dt>
-  <dd><code>${escapeHtml(cfg.jira.baseUrl)}</code></dd>
-  <dt>Authentication method</dt>
-  <dd>${escapeHtml(AUTH_LABEL[cfg.jira.authMethod])}</dd>
-  <dt>Connection</dt>
-  <dd>${connectionCell(snap.jira, now)}</dd>
+<section class="card">
+<div class="card-head"><h2>Jira</h2>${stateBadge(snap.jira)}</div>
+<dl class="rows">
+  <dt>Base URL</dt><dd><code>${escapeHtml(cfg.jira.baseUrl)}</code></dd>
+  <dt>Authentication</dt><dd>${escapeHtml(AUTH_LABEL[cfg.jira.authMethod])}</dd>
+  <dt>Last success</dt><dd>${fmtWhen(snap.jira.lastOkAt, now)}</dd>
+  <dt>Last failure</dt><dd>${failureCell(snap.jira, now)}</dd>
 </dl>
+</section>
 
-<h2>Background polling &amp; rulesets</h2>
-<dl>
-  <dt>Schedule</dt>
-  <dd>${escapeHtml(schedule)}</dd>
-  <dt>Last poll cycle</dt>
-  <dd>${pollCell(snap, now)}</dd>
-  ${coverage}
-  <dt>Ruleset auto-configure</dt>
-  <dd>${
+<section class="card">
+<div class="card-head"><h2>Background polling &amp; rulesets</h2>${pollBadge(snap.poll.state)}</div>
+<dl class="rows">
+  <dt>Schedule</dt><dd>${escapeHtml(schedule)}</dd>
+  <dt>Last cycle</dt><dd>${pollCycleCell(snap.poll, now)}</dd>
+  <dt>Auto-configure</dt><dd>${
     cfg.rulesetAutoconfigure
       ? `enabled — the required <code>${checkName}</code> check is injected into every <code>${prefix}*</code> org ruleset`
       : 'disabled — admins maintain the required-check entry in their rulesets by hand'
   }</dd>
 </dl>
+${coverage}
+</section>
 
-<h2>Process</h2>
-<dl>
-  <dt>Started</dt>
-  <dd>${fmtWhen(snap.startedAt, now)}</dd>
-  <dt>Uptime</dt>
-  <dd>${fmtUptime(now - snap.startedAt)}</dd>
+<section class="card">
+<div class="card-head"><h2>Process</h2><span class="badge neutral">uptime ${escapeHtml(fmtUptime(now - snap.startedAt))}</span></div>
+<dl class="rows">
+  <dt>Started</dt><dd>${fmtWhen(snap.startedAt, now)}</dd>
 </dl>
+</section>
 
+<footer>
 <p class="muted">Failure entries show coarse categories only; full error detail is in the
 server logs. Jira connectivity is exercised only when an evaluation actually references
 Jira issues, so an old “last success” timestamp on a quiet deployment is not a problem
 by itself.</p>
+</footer>
 </body>
 </html>
 `;

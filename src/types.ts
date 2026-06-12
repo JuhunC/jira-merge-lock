@@ -15,6 +15,7 @@
  *   pipeline.ts  evaluatePullRequest(deps, pull, trigger) — the single
  *                evaluation path shared by webhook handlers and the poller
  *   poller.ts    createPoller(deps) -> { start, stop, runOnce }
+ *   webui.ts     escapeHtml + the stylesheet shared by the public pages
  *   homepage.ts  renderHomepage(cfg) -> string (HTML; no secrets)
  *   status.ts    StatusTracker — in-memory operational status fed by the
  *                GitHub fetch wrapper, JiraClient, poller, and webhook layer
