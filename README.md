@@ -105,7 +105,7 @@ All variables (defaults in parentheses; blank = required):
 | `APP_ID` | ✓ | — | numeric GitHub App id; also pins the ruleset entry and filters check-run reads |
 | `PRIVATE_KEY` / `PRIVATE_KEY_PATH` | one of | — | PEM contents (base64 accepted) or path to a mounted PEM file |
 | `WEBHOOK_SECRET` | ✓ | — | from app creation |
-| `PORT` | | `3000` | webhooks + `/healthz` + `/readyz` + homepage |
+| `PORT` | | `3000` | webhooks + `/healthz` + `/readyz` + `/status` + homepage |
 | `HOST` | | `0.0.0.0` | listen address; keep the default in containers |
 | `PUBLIC_URL` | | — | public HTTPS base URL of this deployment; when set, check runs link to the guidelines page |
 | `GHE_HOST` | | — | GitHub Enterprise Server hostname (e.g. `github.yourco.com`); unset = github.com. Register the App **on your GHES instance**, not github.com |
@@ -173,10 +173,23 @@ Structured JSON logs; one line per noteworthy event:
 | `evt` | Meaning |
 |---|---|
 | `verdict` | one PR evaluated — `owner, repo, pr, head_sha, trigger, keys, blocking, conclusion, duration_ms`. "Why is my PR locked?" is one grep away. |
-| `poll_done` | end-of-cycle budget — `installations, repos_scanned, repos_pruned, prs, jira_fetches, duration_ms`. A `poll_overrun` warning means raise `POLL_INTERVAL_SECONDS`. |
+| `poll_done` | end-of-cycle budget — `installations, rulesets, repos_scanned, repos_pruned, prs, jira_fetches, duration_ms`. A `poll_overrun` warning means raise `POLL_INTERVAL_SECONDS`. |
 | `ruleset_autoconfig` | a ruleset was updated — `action: injected` (entry written) or `repinned` (integration id fixed). |
 | `installation_coverage_warning` | the installation is on "selected repositories" — prefix rulesets may target repos the app cannot see (see troubleshooting). |
 | `jira_degraded` / `jira_auth_failed` | Jira outage / credential failure — every evaluation fails the check (fail closed) until Jira works again; dedupe caps it at one failure write per PR per outage. |
+
+### Status page
+
+`GET /status` (machine-readable: `GET /status.json`) shows live operational
+state for users and admins: the configured GitHub API target and Jira base URL,
+the outcome of the most recent call to each (connected / failing, with a coarse
+failure category), the last webhook delivery received, and the last poll cycle —
+when it completed, how long it took, and what it covered (org installations,
+discovered `RULESET_NAME_PREFIX*` rulesets, repos scanned, open PRs evaluated,
+Jira lookups). The page auto-refreshes every 10 seconds and is linked from the
+homepage. Like the homepage it is publicly reachable: it shows the GitHub/Jira
+base URLs by design but never credentials or raw error detail (full errors stay
+in the logs). Start troubleshooting here before digging into logs.
 
 ### Troubleshooting
 
@@ -184,7 +197,7 @@ Structured JSON logs; one line per noteworthy event:
 |---|---|
 | “A PR is locked — why?” | Open the `jira-merge-lock` check run on the PR: its summary table lists every referenced issue, its Jira status, and whether it blocks (with links into Jira). Fix: move the issues to a done status, then hit **Re-run** on the check or wait ≤ `POLL_INTERVAL_SECONDS`. |
 | Nothing happens on PRs | Is the app installed on the org (and on **all** repositories)? Does an org ruleset name start with `RULESET_NAME_PREFIX`? Is that ruleset's enforcement **Active** (Disabled/Evaluate rulesets are out of scope by design)? Does it actually target the PR's repo and base branch? |
-| Every PR blocked with “Jira unreachable — cannot verify” (or “Jira authentication failed”) | Jira credentials or connectivity: check `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: this is the designed fail-closed behavior — every evaluation during a Jira outage (or credential failure) fails the check; verdicts recover automatically within one poll interval of Jira coming back, and dedupe writes each PR's failure once per outage, not per cycle. |
+| Every PR blocked with “Jira unreachable — cannot verify” (or “Jira authentication failed”) | Jira credentials or connectivity: check `/status` (shows the last Jira failure category) or `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: this is the designed fail-closed behavior — every evaluation during a Jira outage (or credential failure) fails the check; verdicts recover automatically within one poll interval of Jira coming back, and dedupe writes each PR's failure once per outage, not per cycle. |
 | PRs in some repo permanently unmergeable, app logs show nothing for it | Installation-coverage mismatch: a prefix ruleset targets a repo the app is not installed on. Install on **All repositories** (setup step 2). |
 | `poll_cycle_failed` mentions `api.github.com` although `GHE_HOST` is set | The variable is not reaching the container. Check the startup log line `github_api_base` (it states the exact API target), and `docker compose exec jira-merge-lock env \| grep GHE`. Note: `docker-compose.sample.yml` does **not** read `.env` — set `GHE_HOST` in its `environment:` block. With the plain `docker-compose.yml`, put it in `.env`. Restart after changing either. |
 
@@ -253,6 +266,11 @@ End-to-end smoke test against a sandbox org, using the bundled fake Jira and a
    then open `http://localhost:3000/` — the guidelines page must show your
    configured done statuses and check name and contain no secrets. Confirm the
    GitHub App's homepage link and the check-run footer link land on it.
+8. Status page: open `http://localhost:3000/status` — GitHub and Jira must show
+   **connected**, the last poll cycle **succeeded** with a non-zero ruleset
+   count, and the page must contain no credentials. Stop the mock Jira and
+   re-run a check → the page flips Jira to **failing** and overall to
+   **Degraded**; restart mock Jira → it recovers within one poll interval.
 
 ## Releasing
 

@@ -1,4 +1,5 @@
 import type { AppConfig } from './config.js';
+import type { JiraStatusRecorder } from './status.js';
 import { JiraAuthError, JiraUnavailableError } from './types.js';
 import type { JiraCycleCache, JiraIssueOutcome, LoggerLike } from './types.js';
 
@@ -49,10 +50,12 @@ export class JiraClient {
   private readonly cfg: AppConfig;
   private readonly log: LoggerLike;
   private readonly baseHeaders: Record<string, string>;
+  private readonly status?: JiraStatusRecorder;
 
-  constructor(cfg: AppConfig, opts?: { logger?: LoggerLike }) {
+  constructor(cfg: AppConfig, opts?: { logger?: LoggerLike; status?: JiraStatusRecorder }) {
     this.cfg = cfg;
     this.log = opts?.logger ?? noopLogger;
+    this.status = opts?.status;
     this.baseHeaders = {
       authorization: authHeader(cfg.jira),
       accept: 'application/json',
@@ -97,9 +100,12 @@ export class JiraClient {
   async probe(): Promise<void> {
     const res = await this.send('GET', '/rest/api/2/myself');
     if (res.status === 403) {
+      this.status?.recordJiraFailure('authentication rejected (403 on probe)');
       throw new JiraAuthError('Jira auth probe rejected (403): credentials lack API access');
     }
     if (!res.ok) {
+      // 5xx already recorded the more precise "server error" category in send().
+      if (res.status < 500) this.status?.recordJiraFailure(`probe failed (HTTP ${res.status})`);
       throw new JiraUnavailableError(`Jira auth probe failed with status ${res.status}`);
     }
   }
@@ -196,15 +202,19 @@ export class JiraClient {
           signal: AbortSignal.timeout(this.cfg.jira.timeoutMs),
         });
       } catch (err) {
-        throw toUnavailable(err, method, path);
+        const unavailable = toUnavailable(err, method, path);
+        this.status?.recordJiraFailure(`unreachable (${unavailable.kind})`);
+        throw unavailable;
       }
 
       if (res.status === 401) {
         // Never retry 401: repeated bad logins trip Jira Server's CAPTCHA lockout.
+        this.status?.recordJiraFailure('authentication rejected (401)');
         throw new JiraAuthError(`Jira rejected credentials (401) on ${method} ${path}`);
       }
       if (res.status === 429) {
         if (attempt > 0) {
+          this.status?.recordJiraFailure('rate limited (429)');
           throw new JiraUnavailableError(
             `Jira rate limit persisted after retry on ${method} ${path}`,
             'rate_limited',
@@ -213,6 +223,10 @@ export class JiraClient {
         await sleep(retryAfterMs(res.headers.get('retry-after')));
         continue;
       }
+      // Any sub-5xx response proves Jira is reachable and (except above) the
+      // credentials work — 404/403 are per-issue outcomes, not outages.
+      if (res.status >= 500) this.status?.recordJiraFailure(`server error (HTTP ${res.status})`);
+      else this.status?.recordJiraOk();
       return res;
     }
   }

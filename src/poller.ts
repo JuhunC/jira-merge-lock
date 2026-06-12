@@ -7,6 +7,7 @@ import {
   repoCouldMatch,
   type ScopeCache,
 } from './rulesets.js';
+import type { StatusTracker } from './status.js';
 import type { JiraCycleCache, LoggerLike, OctokitLike, PullRef } from './types.js';
 
 export interface PollerDeps {
@@ -15,6 +16,8 @@ export interface PollerDeps {
   jira: JiraClient;
   scopeCache: ScopeCache;
   log: LoggerLike;
+  /** Optional sink for /status — records cycle outcomes and coverage counters. */
+  status?: StatusTracker;
 }
 
 export interface Poller {
@@ -38,6 +41,7 @@ interface RepoLike {
 
 interface CycleCounters {
   installations: number;
+  rulesets: number;
   repos_scanned: number;
   repos_pruned: number;
   prs: number;
@@ -145,6 +149,7 @@ export function createPoller(deps: PollerDeps): Poller {
     // Heuristic pruning only — survivors still pass the authoritative
     // branch-rules gate inside the pipeline.
     const prefixRulesets = await discoverPrefixRulesets(octokit, org, cfg, log);
+    counters.rulesets += prefixRulesets.length;
     const surviving = repos.filter((repo) => repoCouldMatch(prefixRulesets, repo));
     counters.repos_pruned += repos.length - surviving.length;
 
@@ -208,9 +213,15 @@ export function createPoller(deps: PollerDeps): Poller {
     });
   };
 
-  const cycle = async (): Promise<void> => {
+  const cycle = async (): Promise<{ counters: CycleCounters; durationMs: number; jiraFetches: number }> => {
     const startedAt = Date.now();
-    const counters: CycleCounters = { installations: 0, repos_scanned: 0, repos_pruned: 0, prs: 0 };
+    const counters: CycleCounters = {
+      installations: 0,
+      rulesets: 0,
+      repos_scanned: 0,
+      repos_pruned: 0,
+      prs: 0,
+    };
     const jiraCycleCache: JiraCycleCache = new Map();
 
     const appOctokit = (await deps.auth()) as OctokitLike;
@@ -248,6 +259,7 @@ export function createPoller(deps: PollerDeps): Poller {
         'poll cycle took longer than the poll interval — consider raising POLL_INTERVAL_SECONDS',
       );
     }
+    return { counters, durationMs, jiraFetches: jiraCycleCache.size };
   };
 
   const runOnce = async (): Promise<void> => {
@@ -267,10 +279,14 @@ export function createPoller(deps: PollerDeps): Poller {
       );
     }, 300_000);
     watchdog.unref();
+    deps.status?.recordPollStarted();
     try {
-      await cycle();
+      const { counters, durationMs, jiraFetches } = await cycle();
+      deps.status?.recordPollCompleted({ ...counters, jira_fetches: jiraFetches }, durationMs);
     } catch (err) {
       log.error({ evt: 'poll_cycle_failed', err: errMessage(err) }, 'poll cycle failed unexpectedly');
+      // /status is public — the category is fixed; err detail stays in the log.
+      deps.status?.recordPollFailed('poll cycle failed — see server logs');
     } finally {
       clearInterval(watchdog);
       busy = false;
@@ -312,7 +328,13 @@ export function createPoller(deps: PollerDeps): Poller {
       busy = true;
       void (async () => {
         const startedAt = Date.now();
-        const counters: CycleCounters = { installations: 1, repos_scanned: 0, repos_pruned: 0, prs: 0 };
+        const counters: CycleCounters = {
+          installations: 1,
+          rulesets: 0,
+          repos_scanned: 0,
+          repos_pruned: 0,
+          prs: 0,
+        };
         try {
           const appOctokit = (await deps.auth()) as OctokitLike;
           const res = await appOctokit.request('GET /app/installations/{installation_id}', {

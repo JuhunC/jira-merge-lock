@@ -10,6 +10,8 @@ import { makeApp } from './index.js';
 import { JiraClient } from './jira.js';
 import { createPoller } from './poller.js';
 import { ScopeCache } from './rulesets.js';
+import { makeRecordingFetch, StatusTracker } from './status.js';
+import { buildStatusJson, renderStatusPage } from './statuspage.js';
 import type { LoggerLike } from './types.js';
 import { JiraAuthError, JiraUnavailableError } from './types.js';
 
@@ -123,7 +125,11 @@ function resolvePrivateKey(cfg: AppConfig): string {
   return pem;
 }
 
-export function makeRoutesHandler(cfg: AppConfig, readiness: Readiness) {
+export function makeRoutesHandler(
+  cfg: AppConfig,
+  readiness: Readiness,
+  status: StatusTracker = new StatusTracker(),
+) {
   const homepage = renderHomepage(cfg);
   return (req: IncomingMessage, res: ServerResponse): boolean => {
     if (req.method !== 'GET') return false;
@@ -135,6 +141,21 @@ export function makeRoutesHandler(cfg: AppConfig, readiness: Readiness) {
           'cache-control': 'public, max-age=300',
         });
         res.end(homepage);
+        return true;
+      // Status is rendered per request (live data) and must never be cached.
+      case '/status':
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(renderStatusPage(cfg, status.snapshot()));
+        return true;
+      case '/status.json':
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(JSON.stringify(buildStatusJson(cfg, status.snapshot()), null, 2));
         return true;
       case '/healthz':
         res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
@@ -184,7 +205,8 @@ async function main(): Promise<void> {
       : 'GitHub API target: https://api.github.com — set GHE_HOST if this should be a GitHub Enterprise Server instance',
   );
 
-  const jira = new JiraClient(cfg, { logger: log });
+  const status = new StatusTracker();
+  const jira = new JiraClient(cfg, { logger: log, status });
   const scopeCache = new ScopeCache(Math.max(60, cfg.pollIntervalSeconds) * 1000);
   const readiness: Readiness = { ready: false, reason: 'startup probe pending' };
 
@@ -206,7 +228,9 @@ async function main(): Promise<void> {
       // GitHub Enterprise Server: without this every API call goes to
       // api.github.com regardless of GHE_HOST in the environment.
       baseUrl: cfg.githubBaseUrl,
-      request: { fetch: makeTimeoutFetch(cfg.githubTimeoutMs) },
+      // Timeout first, then record the outcome for /status — every GitHub API
+      // call this process makes goes through this wrapper.
+      request: { fetch: makeRecordingFetch(status, makeTimeoutFetch(cfg.githubTimeoutMs)) },
     }),
     port: cfg.port,
     host: cfg.host,
@@ -216,8 +240,8 @@ async function main(): Promise<void> {
   let probotRef: Probot | undefined;
   await server.load((app, options) => {
     probotRef = app;
-    options.addHandler(makeRoutesHandler(cfg, readiness));
-    return makeApp(cfg, { jira, scopeCache, requestInstallationPoll })(app, options);
+    options.addHandler(makeRoutesHandler(cfg, readiness, status));
+    return makeApp(cfg, { jira, scopeCache, requestInstallationPoll, status })(app, options);
   });
 
   await server.start();
@@ -234,6 +258,7 @@ async function main(): Promise<void> {
     jira,
     scopeCache,
     log,
+    status,
   });
   // Unconditional: start() always runs one immediate cycle (the startup
   // drift-repair / auto-configure trigger depends on this) and only schedules

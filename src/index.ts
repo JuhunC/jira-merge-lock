@@ -10,6 +10,8 @@ export interface AppDeps {
   /** Hook for main.ts to trigger an immediate poll of one installation after
    * ruleset changes. The poller itself is owned by main.ts, never started here. */
   requestInstallationPoll?: (installationId: number) => void;
+  /** Operational-status sink for the /status page (owned by main.ts). */
+  status?: { recordWebhook(event: string): void };
 }
 
 // merge_group.head_ref looks like refs/heads/gh-readonly-queue/<base-branch>/pr-<n>-<sha>.
@@ -42,6 +44,15 @@ export function makeApp(cfg: AppConfig, deps?: AppDeps): (app: any, options?: an
   return (app: any, _options?: any) => {
     const jira = deps?.jira ?? new JiraClient(cfg, { logger: app.log as LoggerLike });
     const scopeCache = deps?.scopeCache ?? new ScopeCache(cfg.pollIntervalSeconds * 1000);
+
+    // Every verified delivery — including events with no handler below —
+    // proves GitHub can reach this deployment; surfaced on /status. Optional
+    // call: structural fakes in tests don't implement onAny.
+    app.onAny?.((event: any) => {
+      const name = typeof event?.name === 'string' ? event.name : 'unknown';
+      const action = event?.payload?.action;
+      deps?.status?.recordWebhook(typeof action === 'string' ? `${name}.${action}` : name);
+    });
 
     const evaluate = async (
       context: any,

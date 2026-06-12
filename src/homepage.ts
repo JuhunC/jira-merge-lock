@@ -1,6 +1,6 @@
 import type { AppConfig } from './config.js';
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -116,6 +116,11 @@ requests outside any matching ruleset are not blocked by this check.</p>
 
 <h2>Pull requests without Jira keys</h2>
 ${zeroKeyPolicy}
+
+<h2>Deployment status</h2>
+<p>Live operational status of this deployment — GitHub and Jira connectivity and
+the most recent background poll cycle — is published at <a href="/status">/status</a>
+(machine-readable at <a href="/status.json">/status.json</a>).</p>
 
 <h2>FAQ</h2>
 <dl>

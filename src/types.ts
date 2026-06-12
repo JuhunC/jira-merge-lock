@@ -16,6 +16,10 @@
  *                evaluation path shared by webhook handlers and the poller
  *   poller.ts    createPoller(deps) -> { start, stop, runOnce }
  *   homepage.ts  renderHomepage(cfg) -> string (HTML; no secrets)
+ *   status.ts    StatusTracker — in-memory operational status fed by the
+ *                GitHub fetch wrapper, JiraClient, poller, and webhook layer
+ *   statuspage.ts renderStatusPage / buildStatusJson for GET /status[.json]
+ *                (public: shows base URLs + coarse categories, never secrets)
  *   index.ts     Probot app function (webhook wiring)
  *   main.ts      bootstrap: config -> Probot Server + routes -> poller
  */
