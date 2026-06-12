@@ -267,3 +267,32 @@ describe('config: host and publicUrl', () => {
     expect(() => loadConfig(testEnv({ PUBLIC_URL: 'ftp://x.example' }))).toThrow(ConfigError);
   });
 });
+
+describe('makeTimeoutFetch', () => {
+  it('aborts requests that exceed the timeout', async () => {
+    const { makeTimeoutFetch } = await import('../../src/main.js');
+    const neverResolves: typeof fetch = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' })),
+        );
+      });
+    const wrapped = makeTimeoutFetch(20, neverResolves);
+    await expect(wrapped('https://ghe.example.com/api/v3/app')).rejects.toThrow();
+  });
+
+  it('combines caller signals with the timeout', async () => {
+    const { makeTimeoutFetch } = await import('../../src/main.js');
+    let seenSignal: AbortSignal | undefined;
+    const impl: typeof fetch = (_input, init) => {
+      seenSignal = init?.signal as AbortSignal;
+      return Promise.resolve(new Response('ok'));
+    };
+    const wrapped = makeTimeoutFetch(5_000, impl);
+    const caller = new AbortController();
+    await wrapped('https://ghe.example.com/api/v3/app', { signal: caller.signal });
+    expect(seenSignal).toBeDefined();
+    caller.abort();
+    expect(seenSignal!.aborted).toBe(true);
+  });
+});

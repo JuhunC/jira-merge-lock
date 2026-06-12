@@ -256,11 +256,23 @@ export function createPoller(deps: PollerDeps): Poller {
       return;
     }
     busy = true;
+    // Watchdog: a cycle that never finishes (e.g. a hung connection) would
+    // otherwise be invisible — no poll_done, no poll_cycle_failed, only
+    // poll_skipped ticks. Warn every 5 minutes while a cycle is stuck.
+    const startedAt = Date.now();
+    const watchdog = setInterval(() => {
+      log.warn(
+        { evt: 'poll_stuck', running_ms: Date.now() - startedAt },
+        'poll cycle has been running for an unusually long time — a GitHub or Jira call may be hung',
+      );
+    }, 300_000);
+    watchdog.unref();
     try {
       await cycle();
     } catch (err) {
       log.error({ evt: 'poll_cycle_failed', err: errMessage(err) }, 'poll cycle failed unexpectedly');
     } finally {
+      clearInterval(watchdog);
       busy = false;
     }
   };

@@ -102,6 +102,7 @@ services:
       # LOG_LEVEL: "info"            # trace|debug|info|warn|error
       # LOG_FORMAT: "json"           # "pretty" for human-readable logs
       # JIRA_TIMEOUT_MS: "10000"
+      # GITHUB_TIMEOUT_MS: "30000"
       # PORT: "3000"                 # keep in sync with the ports: mapping
       # NODE_EXTRA_CA_CERTS: /certs/corp-ca.pem   # with the CA mount above
 

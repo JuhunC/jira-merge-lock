@@ -86,6 +86,23 @@ export function makeStartupProbe(deps: {
   return run;
 }
 
+/** fetch wrapper enforcing a per-request timeout on every GitHub API call.
+ * Octokit sets no timeout of its own; without this, a connection silently
+ * dropped by an enterprise proxy/firewall hangs the poll cycle forever and
+ * the cycle mutex then blocks every future cycle. Exported for tests. */
+export function makeTimeoutFetch(
+  timeoutMs: number,
+  fetchImpl: typeof fetch = fetch,
+): typeof fetch {
+  return (input, init) => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal as AbortSignal, timeout])
+      : timeout;
+    return fetchImpl(input, { ...init, signal });
+  };
+}
+
 function resolvePrivateKey(cfg: AppConfig): string {
   let pem: string;
   if (cfg.privateKeyPath) {
@@ -189,6 +206,7 @@ async function main(): Promise<void> {
       // GitHub Enterprise Server: without this every API call goes to
       // api.github.com regardless of GHE_HOST in the environment.
       baseUrl: cfg.githubBaseUrl,
+      request: { fetch: makeTimeoutFetch(cfg.githubTimeoutMs) },
     }),
     port: cfg.port,
     host: cfg.host,

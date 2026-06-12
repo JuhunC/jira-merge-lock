@@ -117,6 +117,7 @@ All variables (defaults in parentheses; blank = required):
 | `JIRA_EMAIL` + `JIRA_API_TOKEN` | if `cloud` | — | Jira Cloud email + API token |
 | `JIRA_PAT` | if `pat` | — | Jira Server/DC 8.14+ personal access token |
 | `JIRA_USERNAME` + `JIRA_PASSWORD` | if `basic` | — | legacy Jira Server |
+| `GITHUB_TIMEOUT_MS` | | `30000` | per-request timeout for GitHub API calls |
 | `JIRA_TIMEOUT_MS` | | `10000` | per-request timeout |
 | `JIRA_DONE_STATUSES` | | `Closed,Resolved` | comma list, trimmed, case-insensitive |
 | `JIRA_DONE_USE_CATEGORY` | | `false` | `true`: status category `done` also unlocks (rename/locale-proof) |

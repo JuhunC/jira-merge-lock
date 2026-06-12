@@ -53,6 +53,10 @@ export interface AppConfig {
    * GitHub Enterprise Server. Undefined = github.com. Derived from
    * GHE_HOST / GHE_PROTOCOL (Probot's convention). */
   githubBaseUrl?: string;
+  /** Per-request timeout for GitHub API calls. Octokit has none by default —
+   * a silently-dropping enterprise proxy/firewall would hang a poll cycle
+   * forever (and the cycle mutex then blocks all future cycles). */
+  githubTimeoutMs: number;
   /** Hash of every verdict-relevant setting; folded into check-run
    * fingerprints so a config change invalidates stale verdicts. */
   configHash: string;
@@ -81,6 +85,7 @@ const envSchema = z.object({
   JIRA_USERNAME: z.string().min(1).optional(),
   JIRA_PASSWORD: z.string().min(1).optional(),
   JIRA_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  GITHUB_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   JIRA_DONE_STATUSES: z.string().default('Closed,Resolved'),
   JIRA_DONE_USE_CATEGORY: boolString.default(false),
   JIRA_KEY_REGEX: z.string().min(1).default(DEFAULT_KEY_REGEX),
@@ -248,6 +253,7 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
       password: e.JIRA_PASSWORD,
       timeoutMs: e.JIRA_TIMEOUT_MS,
     },
+    githubTimeoutMs: e.GITHUB_TIMEOUT_MS,
     doneStatuses,
     doneUseCategory: e.JIRA_DONE_USE_CATEGORY,
     keyRegexSource: e.JIRA_KEY_REGEX,
