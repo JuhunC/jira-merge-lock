@@ -209,7 +209,7 @@ export function buildErrorVerdict(
         [
           "Jira rejected this app's credentials, so the issues referenced by this pull request cannot be verified.",
           '',
-          'This is a configuration failure of the jira-merge-lock deployment, not a problem with this pull request — an operator must fix the `JIRA_*` configuration (auth method, credentials, base URL). Developers cannot resolve this from the PR.',
+          'This is a configuration failure of the merge-lock deployment, not a problem with this pull request — an operator must fix the `JIRA_*` configuration (auth method, credentials, base URL). Developers cannot resolve this from the PR.',
           '',
           'Once the credentials are fixed, re-run this check or wait for the automatic re-check.',
         ],

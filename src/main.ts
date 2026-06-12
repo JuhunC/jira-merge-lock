@@ -245,7 +245,7 @@ async function main(): Promise<void> {
   });
 
   await server.start();
-  log.info({ evt: 'started', port: cfg.port }, 'jira-merge-lock listening');
+  log.info({ evt: 'started', port: cfg.port }, 'merge-lock listening');
 
   void makeStartupProbe({ probe: () => jira.probe(), readiness, log })();
 

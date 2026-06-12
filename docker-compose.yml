@@ -1,11 +1,12 @@
-# jira-merge-lock — consumer deployment file (shipped as a release asset).
+# merge-lock — consumer deployment file (shipped as a release asset).
 #
 # IMPORTANT: run exactly ONE replica of this service. A second poller doubles
 # GitHub/Jira rate-limit costs and concurrent ruleset auto-configure widens the
 # read-modify-write race on org rulesets. Do not scale this service.
 
 services:
-  jira-merge-lock:
+  # The image keeps its historical path (it follows the GitHub repo name).
+  merge-lock:
     # The tag pins the semver MAJOR (":0") — you get minor/patch updates on
     # pull without breaking changes. Pin ":0.1.0" for full reproducibility.
     # Bump to ":1" once v1.0.0 is released.

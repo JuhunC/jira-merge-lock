@@ -52,13 +52,13 @@ const OUR_RULE = {
   parameters: {
     strict_required_status_checks_policy: false,
     do_not_enforce_on_create: false,
-    required_status_checks: [{ context: 'jira-merge-lock', integration_id: 12345 }],
+    required_status_checks: [{ context: 'merge-lock/jira-issue', integration_id: 12345 }],
   },
 };
 
 const convergedDetail = {
   id: 1,
-  name: 'jira-merge-lock-main',
+  name: 'merge-lock-main',
   target: 'branch',
   enforcement: 'active',
   conditions: {
@@ -72,7 +72,7 @@ const convergedDetail = {
 
 const driftedDetail = {
   id: 2,
-  name: 'jira-merge-lock-release',
+  name: 'merge-lock-release',
   target: 'branch',
   enforcement: 'active',
   conditions: {
@@ -95,8 +95,8 @@ const driftedDetail = {
 };
 
 const listItems = [
-  { id: 1, name: 'jira-merge-lock-main', target: 'branch', enforcement: 'active' },
-  { id: 2, name: 'jira-merge-lock-release', target: 'branch', enforcement: 'active' },
+  { id: 1, name: 'merge-lock-main', target: 'branch', enforcement: 'active' },
+  { id: 2, name: 'merge-lock-release', target: 'branch', enforcement: 'active' },
   { id: 3, name: 'other-policy', target: 'branch', enforcement: 'active' },
 ];
 
@@ -127,7 +127,7 @@ describe('repository_ruleset webhook -> auto-configure', () => {
         putBody = body;
         return true;
       })
-      .reply(200, () => ({ id: 2, name: 'jira-merge-lock-release', rules: putBody.rules }));
+      .reply(200, () => ({ id: 2, name: 'merge-lock-release', rules: putBody.rules }));
 
     await probot.receive({
       name: 'repository_ruleset',
@@ -151,7 +151,7 @@ describe('repository_ruleset webhook -> auto-configure', () => {
         do_not_enforce_on_create: false,
         required_status_checks: [
           { context: 'ci/build', integration_id: 999 },
-          { context: 'jira-merge-lock', integration_id: 12345 },
+          { context: 'merge-lock/jira-issue', integration_id: 12345 },
         ],
       },
     });

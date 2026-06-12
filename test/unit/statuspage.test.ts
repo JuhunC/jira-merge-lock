@@ -17,7 +17,7 @@ describe('renderStatusPage', () => {
     const html = renderStatusPage(cfg, tracker.snapshot(), 0);
     expect(html.trimStart().toLowerCase().startsWith('<!doctype html>')).toBe(true);
     expect(html).toContain('</html>');
-    expect(html).toContain('jira-merge-lock');
+    expect(html).toContain('merge-lock');
   });
 
   it('deliberately shows the GitHub and Jira base URLs', () => {
@@ -73,7 +73,7 @@ describe('renderStatusPage', () => {
     expect(html).toContain('succeeded');
     expect(html).toContain('<div class="num">2</div><div class="label">org installations</div>');
     expect(html).toContain(
-      '<div class="num">3</div><div class="label"><code>jira-merge-lock*</code> rulesets</div>',
+      '<div class="num">3</div><div class="label"><code>merge-lock*</code> rulesets</div>',
     );
     expect(html).toContain('<div class="num">7</div><div class="label">repos scanned</div>');
     expect(html).toContain(
@@ -88,16 +88,16 @@ describe('renderStatusPage', () => {
     const { tracker } = freshSnap();
     const off = renderStatusPage(cfg, tracker.snapshot(), 0);
     expect(off).toContain('disabled (MIN_PR_COMMENTS=0)');
-    expect(off).toContain('the required <code>jira-merge-lock</code> check is injected');
+    expect(off).toContain('the required <code>merge-lock/jira-issue</code> check is injected');
 
     const enabled = loadConfig(testEnv({ MIN_PR_COMMENTS: '2' }));
     const on = renderStatusPage(enabled, tracker.snapshot(), 0);
     expect(on).toContain('requires 2 comments from someone');
-    expect(on).toContain('<code>jira-merge-lock-comments</code> check');
+    expect(on).toContain('<code>merge-lock/min-comment</code> check');
     expect(on).not.toContain('disabled (MIN_PR_COMMENTS=0)');
     // Auto-configure now lists both injected contexts.
     expect(on).toContain(
-      '<code>jira-merge-lock</code> and <code>jira-merge-lock-comments</code> checks are injected',
+      '<code>merge-lock/jira-issue</code> and <code>merge-lock/min-comment</code> checks are injected',
     );
   });
 
@@ -134,7 +134,7 @@ describe('buildStatusJson', () => {
       github: { baseUrl: 'https://api.github.com', state: 'ok' },
       jira: { baseUrl: 'https://jira.example.com', authMethod: 'cloud', state: 'ok' },
       poll: { intervalSeconds: 300, state: 'ok', lastDurationMs: 100 },
-      settings: { checkName: 'jira-merge-lock', rulesetNamePrefix: 'jira-merge-lock' },
+      settings: { checkName: 'merge-lock/jira-issue', rulesetNamePrefix: 'merge-lock' },
     });
     const text = JSON.stringify(json);
     for (const secret of ['test-secret', 'token-123', 'bot@example.com', 'BEGIN RSA', '12345']) {

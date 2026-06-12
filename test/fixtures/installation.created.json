@@ -3,7 +3,7 @@
   "installation": {
     "id": 2,
     "app_id": 12345,
-    "app_slug": "jira-merge-lock",
+    "app_slug": "merge-lock",
     "target_type": "Organization",
     "repository_selection": "selected",
     "account": { "login": "acme", "id": 5001, "type": "Organization" },

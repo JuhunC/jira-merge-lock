@@ -9,7 +9,7 @@ import {
 } from '../../src/rulesets.js';
 import type { LoggerLike, OctokitLike, OrgRuleset } from '../../src/types.js';
 
-const cfg = loadConfig(testEnv()); // appId 12345, checkName/prefix "jira-merge-lock"
+const cfg = loadConfig(testEnv()); // appId 12345, checkName "merge-lock/jira-issue", prefix "merge-lock"
 
 interface RecordedCall {
   via: 'request' | 'paginate';
@@ -186,7 +186,7 @@ function richRuleset(overrides: Partial<OrgRuleset> = {}): OrgRuleset {
   return {
     id: 42,
     node_id: 'RRS_abc',
-    name: 'jira-merge-lock-main',
+    name: 'merge-lock-main',
     target: 'branch',
     enforcement: 'active',
     bypass_actors: [{ actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' }],
@@ -221,17 +221,17 @@ describe('discoverPrefixRulesets', () => {
     const { octokit, calls } = fakeOctokit({
       paginate: () => [
         // List item carries a BOGUS rules field — it must be ignored.
-        { id: 42, name: 'jira-merge-lock-main', target: 'branch', rules: [{ type: 'bogus' }] },
+        { id: 42, name: 'merge-lock-main', target: 'branch', rules: [{ type: 'bogus' }] },
         { id: 2, name: 'unrelated', target: 'branch' },
-        { id: 3, name: 'jira-merge-lock-tags', target: 'tag' },
-        { id: 4, name: 'jira-merge-lock-norules', target: 'branch' },
-        { id: 5, name: 'jira-merge-lock-untargeted' }, // target undefined => kept
+        { id: 3, name: 'merge-lock-tags', target: 'tag' },
+        { id: 4, name: 'merge-lock-norules', target: 'branch' },
+        { id: 5, name: 'merge-lock-untargeted' }, // target undefined => kept
       ],
       request: (_route, params) => {
         if (params?.['ruleset_id'] === 42) return structuredClone(detail);
         if (params?.['ruleset_id'] === 5)
-          return richRuleset({ id: 5, name: 'jira-merge-lock-untargeted', rules: [] });
-        return richRuleset({ id: 4, name: 'jira-merge-lock-norules', rules: undefined });
+          return richRuleset({ id: 5, name: 'merge-lock-untargeted', rules: [] });
+        return richRuleset({ id: 4, name: 'merge-lock-norules', rules: undefined });
       },
     });
 
@@ -317,7 +317,7 @@ describe('autoconfigureOrg', () => {
 
     expect(body['org']).toBe('acme');
     expect(body['ruleset_id']).toBe(42);
-    expect(body['name']).toBe('jira-merge-lock-main');
+    expect(body['name']).toBe('merge-lock-main');
     expect(body['target']).toBe('branch');
     expect(body['enforcement']).toBe('active');
     expect(body['conditions']).toEqual(detail.conditions);
@@ -420,7 +420,7 @@ describe('repoCouldMatch', () => {
   const repo = { id: 7, name: 'api-server' };
   const rs = (conditions?: OrgRuleset['conditions']): OrgRuleset => ({
     id: 1,
-    name: 'jira-merge-lock-x',
+    name: 'merge-lock-x',
     ...(conditions !== undefined ? { conditions } : {}),
   });
 

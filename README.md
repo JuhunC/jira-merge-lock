@@ -1,4 +1,4 @@
-# jira-merge-lock
+# merge-lock
 
 A GitHub App that blocks pull-request merges until every Jira issue referenced
 in the PR's commit messages is done.
@@ -7,9 +7,9 @@ in the PR's commit messages is done.
 
 The app scans every commit message in a PR for Jira keys (e.g. `PRJ-123`),
 looks up each issue's status in Jira, and posts a check run named
-`jira-merge-lock` on the PR's head commit — `failure` while any referenced
+`merge-lock/jira-issue` on the PR's head commit — `failure` while any referenced
 issue is not in a done status, `success` otherwise. Organization rulesets whose
-name starts with a configurable prefix (`jira-merge-lock` by default) define
+name starts with a configurable prefix (`merge-lock` by default) define
 *which* repos and branches are locked: the app automatically injects its own
 required-check entry (pinned to its app id, so no other app can forge a green
 check) into every prefix-matched ruleset. GitHub then refuses the merge while
@@ -41,7 +41,7 @@ There is no database; state lives in GitHub's own check runs. Restarts are free.
 ### Optional second lock: required discussion (`MIN_PR_COMMENTS`)
 
 Set `MIN_PR_COMMENTS=1` (or higher) and the app posts a **second required
-check** (named `CHECK_NAME-comments` by default, override with
+check** (named `merge-lock/min-comment` by default, override with
 `COMMENT_CHECK_NAME`) that blocks the merge until the PR has at least that many
 comments **from someone other than the PR author**. What counts, each once:
 PR conversation comments, inline review comments, and reviews with body text
@@ -98,7 +98,7 @@ and *Issue comment* requires Issues read.
 
 A prefix-matched ruleset can target repositories by pattern. If such a ruleset
 covers a repo the app is *not* installed on, GitHub still requires the
-`jira-merge-lock` check there — but nothing can ever post it. Every PR in that
+`merge-lock/*` checks there — but nothing can ever post them. Every PR in that
 repo becomes **permanently unmergeable**, and the app cannot see the repo to
 warn you. Installing on all repositories removes the failure mode entirely;
 the app logs a loud warning at auto-configure time if it detects
@@ -153,10 +153,10 @@ All variables (defaults in parentheses; blank = required):
 | `JIRA_PROJECT_KEYS` | | — | allowlist, e.g. `PRJ,OPS`; recommended — kills `UTF-8`/`SHA-256` false positives |
 | `REQUIRE_ISSUE_KEY` | | `false` | `true`: zero-key PRs fail instead of passing |
 | `MIN_PR_COMMENTS` | | `0` | `>0`: also require N comments from non-authors as a [second check](#optional-second-lock-required-discussion-min_pr_comments); `0` disables |
-| `COMMENT_CHECK_NAME` | | `CHECK_NAME-comments` | name of the second check run / required status context |
-| `RULESET_NAME_PREFIX` | | `jira-merge-lock` | which org rulesets define scope / get auto-configured |
+| `COMMENT_CHECK_NAME` | | `merge-lock/min-comment` | name of the second check run / required status context |
+| `RULESET_NAME_PREFIX` | | `merge-lock` | which org rulesets define scope / get auto-configured |
 | `RULESET_AUTOCONFIGURE` | | `true` | `false` = never write rulesets ([hardened mode](#hardened-mode)) |
-| `CHECK_NAME` | | `jira-merge-lock` | check-run name / required status context |
+| `CHECK_NAME` | | `merge-lock/jira-issue` | check-run name / required status context |
 | `POLL_INTERVAL_SECONDS` | | `300` | open-PR re-scan interval; `0` disables |
 | `POLL_CONCURRENCY` | | `5` | repos in flight per installation |
 
@@ -175,8 +175,8 @@ before step 1):
 ### 5. Create the org rulesets
 
 In **Organization → Settings → Repository → Rulesets**, create branch rulesets
-named `jira-merge-lock…` (or your `RULESET_NAME_PREFIX`) targeting the
-repositories and branches you want locked — e.g. `jira-merge-lock-main`
+named `merge-lock…` (or your `RULESET_NAME_PREFIX`) targeting the
+repositories and branches you want locked — e.g. `merge-lock-main`
 targeting `main` across all repos. You do **not** add the required check
 yourself: the app injects its required-check entry (pinned to its app id)
 automatically on startup, on ruleset events, and at the top of each poll
@@ -189,6 +189,35 @@ then supersedes its stale check with a `skipped` run) or set
 `RULESET_AUTOCONFIGURE=false`.
 
 ## Operations
+
+### Upgrading from jira-merge-lock (v0.5.x and earlier)
+
+v0.6.0 renamed the app to **merge-lock** and namespaced its checks: the Jira
+check default is now `merge-lock/jira-issue` (was `jira-merge-lock`), the
+comment check default is `merge-lock/min-comment`, and the
+`RULESET_NAME_PREFIX` default is `merge-lock` (was `jira-merge-lock`).
+
+⚠ **Do not upgrade with default config and old rulesets in place.** Rulesets
+named `jira-merge-lock*` no longer match the new default prefix, so the app
+stops managing them — while they still require the old `jira-merge-lock`
+context that nothing posts anymore, leaving every PR under them permanently
+unmergeable. Pick one path:
+
+1. **Keep the old names (zero churn):** set `RULESET_NAME_PREFIX=jira-merge-lock`
+   and `CHECK_NAME=jira-merge-lock` (plus `COMMENT_CHECK_NAME=jira-merge-lock-comments`
+   if the comment gate is on) in your environment, then upgrade. Nothing else
+   changes.
+2. **Adopt the new names:** rename each `jira-merge-lock*` org ruleset to start
+   with `merge-lock` (e.g. `merge-lock-main`), then upgrade. On the next
+   startup/poll cycle auto-configure removes the old `jira-merge-lock` entry
+   (it is pinned to the app id, so the app may delete it) and injects the new
+   contexts; open PRs receive the new checks within one poll cycle. In
+   [hardened mode](#hardened-mode) an admin swaps the required-check contexts
+   by hand instead.
+
+The GitHub App's **display name** is renamed manually on its settings page
+(the manifest only names new registrations), and the container image path is
+unchanged: `ghcr.io/juhunc/jira-merge-lock`.
 
 ### Run exactly ONE replica
 
@@ -226,12 +255,12 @@ in the logs). Start troubleshooting here before digging into logs.
 
 | Symptom | Check |
 |---|---|
-| “A PR is locked — why?” | Open the `jira-merge-lock` check run on the PR: its summary table lists every referenced issue, its Jira status, and whether it blocks (with links into Jira). Fix: move the issues to a done status, then hit **Re-run** on the check or wait ≤ `POLL_INTERVAL_SECONDS`. |
+| “A PR is locked — why?” | Open the `merge-lock/jira-issue` check run on the PR: its summary table lists every referenced issue, its Jira status, and whether it blocks (with links into Jira). Fix: move the issues to a done status, then hit **Re-run** on the check or wait ≤ `POLL_INTERVAL_SECONDS`. |
 | Nothing happens on PRs | Is the app installed on the org (and on **all** repositories)? Does an org ruleset name start with `RULESET_NAME_PREFIX`? Is that ruleset's enforcement **Active** (Disabled/Evaluate rulesets are out of scope by design)? Does it actually target the PR's repo and base branch? |
 | Every PR blocked with “Jira unreachable — cannot verify” (or “Jira authentication failed”) | Jira credentials or connectivity: check `/status` (shows the last Jira failure category) or `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: this is the designed fail-closed behavior — every evaluation during a Jira outage (or credential failure) fails the check; verdicts recover automatically within one poll interval of Jira coming back, and dedupe writes each PR's failure once per outage, not per cycle. |
 | PRs in some repo permanently unmergeable, app logs show nothing for it | Installation-coverage mismatch: a prefix ruleset targets a repo the app is not installed on. Install on **All repositories** (setup step 2). |
 | Comment check (`MIN_PR_COMMENTS`) never reacts to new comments, or errors when listing them | The app is missing the **Issues: read** permission or the comment/review event subscriptions (added for v0.5.0). Update the app's **Permissions & events** settings and approve the org's permission request — until then comment webhooks are not delivered and comment listing can 403. The poll cycle is the fallback trigger either way. |
-| `poll_cycle_failed` mentions `api.github.com` although `GHE_HOST` is set | The variable is not reaching the container. Check the startup log line `github_api_base` (it states the exact API target), and `docker compose exec jira-merge-lock env \| grep GHE`. Note: `docker-compose.sample.yml` does **not** read `.env` — set `GHE_HOST` in its `environment:` block. With the plain `docker-compose.yml`, put it in `.env`. Restart after changing either. |
+| `poll_cycle_failed` mentions `api.github.com` although `GHE_HOST` is set | The variable is not reaching the container. Check the startup log line `github_api_base` (it states the exact API target), and `docker compose exec merge-lock env \| grep GHE`. Note: `docker-compose.sample.yml` does **not** read `.env` — set `GHE_HOST` in its `environment:` block. With the plain `docker-compose.yml`, put it in `.env`. Restart after changing either. |
 
 ### Merge queues
 
@@ -260,8 +289,8 @@ environment:
 If granting `organization_administration: write` is unacceptable, set
 `RULESET_AUTOCONFIGURE=false` and have an org admin add the required check by
 hand to each prefix-named ruleset: rule **Require status checks to pass** →
-add context `jira-merge-lock` (your `CHECK_NAME`) selecting the
-jira-merge-lock app as the source. Scope detection uses only the repo
+add context `merge-lock/jira-issue` (your `CHECK_NAME`) selecting the
+merge-lock app as the source. Scope detection uses only the repo
 branch-rules endpoint and needs no org permission, so everything else keeps
 working; you may then also remove the org permission from the app.
 
@@ -283,7 +312,7 @@ End-to-end smoke test against a sandbox org, using the bundled fake Jira and a
                                            #       POLL_INTERVAL_SECONDS=30
    ```
 
-3. Create an org ruleset `jira-merge-lock-main` (enforcement **Active**, target
+3. Create an org ruleset `merge-lock-main` (enforcement **Active**, target
    the sandbox repo's `main`, **no rules**). Verify the logs show
    `ruleset_autoconfig action:injected` and the org ruleset UI now shows the
    required check pinned to the app — that's auto-configure working.

@@ -69,7 +69,7 @@ const IN_SCOPE_RULES = [
     ruleset_id: 2,
     parameters: {
       strict_required_status_checks_policy: false,
-      required_status_checks: [{ context: 'jira-merge-lock', integration_id: 12345 }],
+      required_status_checks: [{ context: 'merge-lock/jira-issue', integration_id: 12345 }],
     },
   },
 ];
@@ -203,7 +203,7 @@ describe('merge_group.checks_requested', () => {
     expect(post.isDone()).toBe(true);
     // The verdict is computed from the PR but posted on the queue's temp SHA.
     expect(inProgress.head_sha).toBe(MG_SHA);
-    expect(inProgress.name).toBe('jira-merge-lock');
+    expect(inProgress.name).toBe('merge-lock/jira-issue');
     expect(inProgress.status).toBe('in_progress');
     expect(patch.isDone()).toBe(true);
     expect(body.status).toBe('completed');

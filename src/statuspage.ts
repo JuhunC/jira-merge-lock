@@ -5,7 +5,7 @@ import {
   type StatusSnapshot,
 } from './status.js';
 import type { JiraAuthMethod } from './types.js';
-import { escapeHtml, SHARED_CSS } from './webui.js';
+import { APP_NAME, escapeHtml, SHARED_CSS } from './webui.js';
 
 /**
  * Live operational status served at GET /status (HTML, auto-refreshing) and
@@ -173,7 +173,7 @@ export function renderStatusPage(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="10">
-<title>${checkName} — status</title>
+<title>${APP_NAME} — status</title>
 <style>${SHARED_CSS}
   .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   .hero .subtitle { margin-bottom: 1rem; }
@@ -200,7 +200,7 @@ export function renderStatusPage(
 <body>
 <div class="hero">
   <div>
-    <h1><code>${checkName}</code> — deployment status</h1>
+    <h1><code>${APP_NAME}</code> — deployment status</h1>
     <p class="subtitle">Auto-refreshes every 10 seconds · <a href="/status.json">JSON</a> ·
     <a href="/">merge-check guidelines</a></p>
   </div>

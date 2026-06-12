@@ -531,7 +531,7 @@ describe('pipeline policy (live path): in_progress lifecycle', () => {
     expect(patch['status']).toBe('completed');
     expect(patch['conclusion']).toBe('failure');
     expect((patch['output'] as { title: string }).title).toBe(
-      'jira-merge-lock internal error — use Re-run',
+      'merge-lock internal error — use Re-run',
     );
   });
 

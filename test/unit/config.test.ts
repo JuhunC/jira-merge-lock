@@ -9,9 +9,9 @@ describe('loadConfig', () => {
     expect(cfg.doneStatuses).toEqual(['closed', 'resolved']);
     expect(cfg.doneUseCategory).toBe(false);
     expect(cfg.requireIssueKey).toBe(false);
-    expect(cfg.rulesetNamePrefix).toBe('jira-merge-lock');
+    expect(cfg.rulesetNamePrefix).toBe('merge-lock');
     expect(cfg.rulesetAutoconfigure).toBe(true);
-    expect(cfg.checkName).toBe('jira-merge-lock');
+    expect(cfg.checkName).toBe('merge-lock/jira-issue');
     expect(cfg.pollIntervalSeconds).toBe(300);
     expect(cfg.pollConcurrency).toBe(5);
     expect(cfg.port).toBe(3000);
@@ -104,7 +104,7 @@ describe('loadConfig', () => {
 
   it('treats empty strings as absent (defaults apply)', () => {
     const cfg = loadConfig(testEnv({ CHECK_NAME: '' }));
-    expect(cfg.checkName).toBe('jira-merge-lock');
+    expect(cfg.checkName).toBe('merge-lock/jira-issue');
   });
 
   it('derives the GitHub Enterprise API base URL from GHE_HOST', () => {

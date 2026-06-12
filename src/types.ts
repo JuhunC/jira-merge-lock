@@ -1,5 +1,5 @@
 /**
- * Shared types and cross-module contracts for jira-merge-lock.
+ * Shared types and cross-module contracts for merge-lock.
  *
  * Module map (each module's exports are specified in its own file; the data
  * shapes they exchange live here):

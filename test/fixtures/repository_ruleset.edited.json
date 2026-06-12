@@ -2,7 +2,7 @@
   "action": "edited",
   "repository_ruleset": {
     "id": 2,
-    "name": "jira-merge-lock-release",
+    "name": "merge-lock-release",
     "target": "branch",
     "source_type": "Organization",
     "source": "acme",

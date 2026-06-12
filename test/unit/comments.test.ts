@@ -157,10 +157,10 @@ describe('buildCommentVerdict', () => {
 });
 
 describe('config: MIN_PR_COMMENTS / COMMENT_CHECK_NAME', () => {
-  it('defaults to disabled with a derived check name', () => {
+  it('defaults to disabled with the category default name', () => {
     const cfg = loadConfig(testEnv());
     expect(cfg.minPrComments).toBe(0);
-    expect(cfg.commentCheckName).toBe('jira-merge-lock-comments');
+    expect(cfg.commentCheckName).toBe('merge-lock/min-comment');
   });
 
   it('parses the threshold and honors an explicit name', () => {
@@ -171,16 +171,16 @@ describe('config: MIN_PR_COMMENTS / COMMENT_CHECK_NAME', () => {
     expect(cfg.commentCheckName).toBe('peer-discussion');
   });
 
-  it('derives the name from a custom CHECK_NAME', () => {
+  it('keeps the category default even under a custom CHECK_NAME', () => {
     expect(loadConfig(testEnv({ CHECK_NAME: 'my-lock' })).commentCheckName).toBe(
-      'my-lock-comments',
+      'merge-lock/min-comment',
     );
   });
 
   it('rejects negatives and a name colliding with CHECK_NAME', () => {
     expect(() => loadConfig(testEnv({ MIN_PR_COMMENTS: '-1' }))).toThrow(ConfigError);
     expect(() =>
-      loadConfig(testEnv({ COMMENT_CHECK_NAME: 'jira-merge-lock' })),
+      loadConfig(testEnv({ COMMENT_CHECK_NAME: 'merge-lock/jira-issue' })),
     ).toThrow(ConfigError);
   });
 });
@@ -191,7 +191,7 @@ const IN_SCOPE_RULES = [
   {
     type: 'required_status_checks',
     parameters: {
-      required_status_checks: [{ context: 'jira-merge-lock', integration_id: APP_ID }],
+      required_status_checks: [{ context: 'merge-lock/jira-issue', integration_id: APP_ID }],
     },
   },
 ];
@@ -226,7 +226,7 @@ describe('evaluateCommentCheck', () => {
     await evaluateCommentCheck(pipelineDeps(octokit), PULL, 'poll');
     expect(posted).toHaveLength(1);
     expect(posted[0]).toMatchObject({
-      name: 'jira-merge-lock-comments',
+      name: 'merge-lock/min-comment',
       head_sha: 'aaa',
       status: 'completed',
       conclusion: 'success',
@@ -271,7 +271,7 @@ describe('evaluateCommentCheck', () => {
     });
     await evaluateCommentCheck(pipelineDeps(octokit), PULL, 'webhook');
     expect(posted).toHaveLength(1);
-    expect(posted[0]).toMatchObject({ name: 'jira-merge-lock-comments', status: 'in_progress' });
+    expect(posted[0]).toMatchObject({ name: 'merge-lock/min-comment', status: 'in_progress' });
     expect(patched).toHaveLength(1);
     expect(patched[0]).toMatchObject({
       check_run_id: 42,
@@ -316,14 +316,14 @@ describe('evaluateAllChecks', () => {
     const posted: any[] = [];
     const { octokit } = makeOctokit(fullHandlers(posted));
     await evaluateAllChecks(pipelineDeps(octokit), PULL, 'poll');
-    expect(posted.map((p) => p.name)).toEqual(['jira-merge-lock', 'jira-merge-lock-comments']);
+    expect(posted.map((p) => p.name)).toEqual(['merge-lock/jira-issue', 'merge-lock/min-comment']);
   });
 
   it('runs only the Jira check when MIN_PR_COMMENTS=0', async () => {
     const posted: any[] = [];
     const { octokit, calls } = makeOctokit(fullHandlers(posted));
     await evaluateAllChecks(pipelineDeps(octokit, loadConfig(testEnv())), PULL, 'poll');
-    expect(posted.map((p) => p.name)).toEqual(['jira-merge-lock']);
+    expect(posted.map((p) => p.name)).toEqual(['merge-lock/jira-issue']);
     expect(calls.map((c) => c.route)).not.toContain(ISSUE_COMMENTS);
   });
 });
@@ -397,7 +397,7 @@ describe('comment webhooks', () => {
       },
     });
     // in_progress POST for the COMMENT check only, completed as success.
-    expect(posted.map((p) => p.name)).toEqual(['jira-merge-lock-comments']);
+    expect(posted.map((p) => p.name)).toEqual(['merge-lock/min-comment']);
     expect(patched[0]).toMatchObject({ conclusion: 'success' });
   });
 

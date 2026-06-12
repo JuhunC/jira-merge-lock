@@ -54,7 +54,7 @@ describe('makeRoutesHandler', () => {
     expect(rec.status).toBe(200);
     expect(rec.headers['content-type']).toBe('text/html; charset=utf-8');
     expect(rec.headers['cache-control']).toBe('public, max-age=300');
-    expect(rec.body).toContain('jira-merge-lock'); // default CHECK_NAME
+    expect(rec.body).toContain('merge-lock'); // app name + default CHECK_NAME
     expect(rec.body).not.toContain(JIRA_HOST);
     expect(rec.body).not.toContain('test-secret'); // WEBHOOK_SECRET
     expect(rec.body).not.toContain('token-123'); // JIRA_API_TOKEN

@@ -45,7 +45,7 @@ const IN_SCOPE_RULES = [
     ruleset_id: 2,
     parameters: {
       strict_required_status_checks_policy: false,
-      required_status_checks: [{ context: 'jira-merge-lock', integration_id: 12345 }],
+      required_status_checks: [{ context: 'merge-lock/jira-issue', integration_id: 12345 }],
     },
   },
 ];
@@ -158,7 +158,7 @@ describe('pull_request webhook evaluation', () => {
     } as any);
 
     expect(post.isDone()).toBe(true);
-    expect(inProgress.name).toBe('jira-merge-lock');
+    expect(inProgress.name).toBe('merge-lock/jira-issue');
     expect(inProgress.head_sha).toBe(HEAD_SHA);
     expect(inProgress.status).toBe('in_progress');
     expect(inProgress.output.title).toBe('Verifying referenced Jira issues…');

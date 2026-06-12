@@ -5,6 +5,10 @@
  * identically on locked-down enterprise networks and under strict CSPs.
  */
 
+/** Display name of the app on its public pages. Check names are configurable
+ * (CHECK_NAME / COMMENT_CHECK_NAME); the app's own identity is not. */
+export const APP_NAME = 'merge-lock';
+
 export function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')

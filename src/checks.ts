@@ -9,7 +9,7 @@ export interface CheckRef {
 
 /** Latest run of OUR check on a head SHA, or null when none exists. The
  * app_id filter stops a same-named run from another integration (e.g. an
- * Actions job coincidentally called "jira-merge-lock") from confusing dedupe.
+ * Actions job coincidentally called "merge-lock/jira-issue") from confusing dedupe.
  * The prior output (title/summary) is included for callers that need it;
  * old runs may lack output. */
 export async function findLatestCheckRun(

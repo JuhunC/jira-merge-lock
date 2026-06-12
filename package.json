@@ -1,7 +1,7 @@
 {
-  "name": "jira-merge-lock",
+  "name": "merge-lock",
   "version": "0.1.0",
-  "description": "GitHub App that blocks PR merges until every Jira issue referenced in the PR's commit messages is closed/resolved",
+  "description": "GitHub App that blocks PR merges until every referenced Jira issue is done and optional discussion requirements are met",
   "type": "module",
   "main": "lib/main.js",
   "engines": {

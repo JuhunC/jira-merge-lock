@@ -48,7 +48,7 @@ export interface AppConfig {
    * required to merge. 0 (default) disables the comment check entirely. */
   minPrComments: number;
   /** Name of the second check run posted when minPrComments > 0.
-   * Defaults to "<checkName>-comments". */
+   * Defaults to "merge-lock/min-comment". */
   commentCheckName: string;
   pollIntervalSeconds: number;
   pollConcurrency: number;
@@ -97,9 +97,9 @@ const envSchema = z.object({
   JIRA_KEY_REGEX: z.string().min(1).default(DEFAULT_KEY_REGEX),
   JIRA_PROJECT_KEYS: z.string().optional(),
   REQUIRE_ISSUE_KEY: boolString.default(false),
-  RULESET_NAME_PREFIX: z.string().min(1).default('jira-merge-lock'),
+  RULESET_NAME_PREFIX: z.string().min(1).default('merge-lock'),
   RULESET_AUTOCONFIGURE: boolString.default(true),
-  CHECK_NAME: z.string().min(1).max(100).default('jira-merge-lock'),
+  CHECK_NAME: z.string().min(1).max(100).default('merge-lock/jira-issue'),
   MIN_PR_COMMENTS: z.coerce.number().int().min(0).default(0),
   COMMENT_CHECK_NAME: z.string().min(1).max(100).optional(),
   POLL_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(300),
@@ -226,14 +226,11 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     }
   }
 
-  // Two distinct check runs need two distinct names. The derived default can
-  // exceed GitHub's 100-char check-name cap when CHECK_NAME is near it.
-  const commentCheckName = e.COMMENT_CHECK_NAME ?? `${e.CHECK_NAME}-comments`;
+  // Both checks live in the merge-lock "category" (slash-namespaced check
+  // names). Operators overriding CHECK_NAME should set COMMENT_CHECK_NAME too.
+  const commentCheckName = e.COMMENT_CHECK_NAME ?? 'merge-lock/min-comment';
   if (commentCheckName === e.CHECK_NAME) {
     problems.push('COMMENT_CHECK_NAME: must differ from CHECK_NAME (two separate check runs)');
-  }
-  if (commentCheckName.length > 100) {
-    problems.push('COMMENT_CHECK_NAME: must be at most 100 characters (GitHub check-name limit)');
   }
 
   if (problems.length > 0) throw new ConfigError(problems);

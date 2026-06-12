@@ -1,10 +1,13 @@
-# GitHub App manifest for jira-merge-lock.
+# GitHub App manifest for merge-lock.
 # Used with GitHub's "register an app from a manifest" flow — see README setup
 # step 1. Replace YOUR-DEPLOYMENT-HOST with the public HTTPS host the
 # container is served behind.
 
-name: jira-merge-lock
-description: Blocks PR merges until all referenced Jira issues are done.
+name: merge-lock
+description: >-
+  Blocks PR merges until all referenced Jira issues are done
+  (merge-lock/jira-issue) and, optionally, the PR has enough comments from
+  non-authors (merge-lock/min-comment).
 
 # Homepage = the app's own developer-guidelines page, served at GET / by the
 # container itself ("why is my PR locked?" lands here).

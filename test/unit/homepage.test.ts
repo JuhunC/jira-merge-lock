@@ -62,7 +62,7 @@ describe('renderHomepage', () => {
     const on = renderHomepage(loadConfig(testEnv({ MIN_PR_COMMENTS: '2' })));
     expect(on).toContain('Required discussion');
     expect(on).toContain('2 comments from someone other than its author');
-    expect(on).toContain('jira-merge-lock-comments');
+    expect(on).toContain('merge-lock/min-comment');
   });
 
   it('never leaks secrets, Jira config, or the app id', () => {

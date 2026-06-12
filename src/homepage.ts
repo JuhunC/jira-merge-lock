@@ -1,5 +1,5 @@
 import type { AppConfig } from './config.js';
-import { escapeHtml, SHARED_CSS } from './webui.js';
+import { APP_NAME, escapeHtml, SHARED_CSS } from './webui.js';
 
 /**
  * Developer-guidelines page served at GET /. Renders ONLY non-sensitive
@@ -57,7 +57,7 @@ added or removed.</p>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${checkName} — merge check guidelines</title>
+<title>${APP_NAME} — merge check guidelines</title>
 <style>${SHARED_CSS}
   dl.faq { margin: 0; }
   dl.faq dt { font-weight: 600; margin-top: 1rem; }
@@ -68,7 +68,7 @@ added or removed.</p>
 </head>
 <body>
 <header>
-<h1><code>${checkName}</code> — why is my merge blocked?</h1>
+<h1><code>${APP_NAME}</code> — why is my merge blocked?</h1>
 <p class="subtitle">This check scans every commit message in your pull request for Jira issue keys
 (like <code>PRJ-123</code>), looks each referenced issue up in Jira, and
 <strong>blocks the merge while any referenced issue is not done</strong>.

@@ -1,4 +1,4 @@
-# jira-merge-lock — single-file sample compose. Every common tweak is inline;
+# merge-lock — single-file sample compose. Every common tweak is inline;
 # no separate .env needed. (Prefer env-file based config? Use the plain
 # docker-compose.yml + .env.example instead.)
 #
@@ -14,7 +14,8 @@
 #   serves many organizations.
 
 services:
-  jira-merge-lock:
+  # The image keeps its historical path (it follows the GitHub repo name).
+  merge-lock:
     # ":0" tracks the newest 0.x (minor/patch updates on pull, no breaking
     # changes). Pin ":0.1.0" for full reproducibility. Bump to ":1" at v1.0.0.
     image: ghcr.io/juhunc/jira-merge-lock:0
@@ -57,7 +58,7 @@ services:
       # ── Behavior tweaks (optional — defaults shown) ────────────────────────
       # Org rulesets whose name starts with this prefix define WHERE the lock
       # applies; the app auto-injects its required check into them.
-      # RULESET_NAME_PREFIX: "jira-merge-lock"
+      # RULESET_NAME_PREFIX: "merge-lock"
 
       # Jira statuses that unblock a merge (case-insensitive, comma list).
       # JIRA_DONE_STATUSES: "Closed,Resolved"
@@ -81,7 +82,7 @@ services:
       # SECOND required check. "0" disables. Needs the Issues:read permission
       # + comment/review events on the app (see README) — added in v0.5.0.
       # MIN_PR_COMMENTS: "0"
-      # COMMENT_CHECK_NAME: "jira-merge-lock-comments"
+      # COMMENT_CHECK_NAME: "merge-lock/min-comment"
 
       # How often Jira is re-checked for open PRs (seconds). "0" disables
       # polling — locks then only update on PR events / manual re-runs.
@@ -89,7 +90,7 @@ services:
       # POLL_CONCURRENCY: "5"
 
       # Name of the check run / required status context.
-      # CHECK_NAME: "jira-merge-lock"
+      # CHECK_NAME: "merge-lock/jira-issue"
 
       # "false": never write rulesets — an admin maintains the required-check
       # entry by hand (hardened mode).
@@ -97,7 +98,7 @@ services:
 
       # Public HTTPS base URL of this deployment. When set, every check run
       # links to the guidelines homepage the app serves at "/".
-      # PUBLIC_URL: "https://jira-merge-lock.yourco.com"
+      # PUBLIC_URL: "https://merge-lock.yourco.com"
 
       # GitHub Enterprise Server? Set your instance hostname — the app then
       # talks to https://<GHE_HOST>/api/v3 instead of github.com. The App must

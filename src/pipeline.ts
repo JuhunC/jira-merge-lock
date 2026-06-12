@@ -220,7 +220,7 @@ async function evaluateLive(
       await completeCheckRun(octokit, checkRef, checkRunId, {
         conclusion: 'failure',
         externalId: `internal_error|${cfg.configHash}`,
-        title: 'jira-merge-lock internal error — use Re-run',
+        title: 'merge-lock internal error — use Re-run',
         summary:
           'The evaluation crashed before a verdict could be computed. The check is completed as a failure so this pull request is not left pending forever.\n\nUse "Re-run" on this check to retry (or wait for the automatic re-check); see the app logs for the underlying error.',
       });
