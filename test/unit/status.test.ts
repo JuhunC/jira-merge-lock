@@ -6,6 +6,7 @@ import { createPoller } from '../../src/poller.js';
 import { ScopeCache } from '../../src/rulesets.js';
 import {
   deriveOverall,
+  liveLocks,
   makeRecordingFetch,
   StatusTracker,
   type StatusSnapshot,
@@ -96,6 +97,91 @@ describe('StatusTracker', () => {
     snap.poll.lastCounters!.prs = 999;
     expect(tracker.snapshot().github.state).toBe('pending');
     expect(tracker.snapshot().poll.lastCounters!.prs).toBe(1);
+  });
+});
+
+describe('rulesets and evaluation recording', () => {
+  const evalBase = {
+    owner: 'acme',
+    repo: 'widgets',
+    pullNumber: 7,
+    check: 'merge-lock/jira-issue',
+    trigger: 'poll',
+    title: 'Blocked: 1 of 1 Jira issues not done',
+  } as const;
+
+  it('replaces an org ruleset view wholesale and sorts orgs in the snapshot', () => {
+    const { tracker } = tracked(100);
+    const rs = (name: string) => ({
+      id: 1,
+      name,
+      enforcement: 'active',
+      requiresJiraCheck: true,
+      requiresCommentCheck: false,
+    });
+    tracker.recordRulesets('zeta', [rs('merge-lock-z')]);
+    tracker.recordRulesets('acme', [rs('merge-lock-a'), rs('merge-lock-b')]);
+    tracker.recordRulesets('zeta', [rs('merge-lock-z2')]); // replaces, not appends
+    const snap = tracker.snapshot();
+    expect(snap.rulesets.map((o) => o.org)).toEqual(['acme', 'zeta']);
+    expect(snap.rulesets[1]!.rulesets.map((r) => r.name)).toEqual(['merge-lock-z2']);
+    expect(snap.rulesets[0]!.seenAt).toBe(100);
+  });
+
+  it('tracks blocked PRs per (PR, check): failure adds, success removes', () => {
+    const { tracker } = tracked();
+    tracker.recordEvaluation({ ...evalBase, conclusion: 'failure' });
+    tracker.recordEvaluation({
+      ...evalBase,
+      check: 'merge-lock/min-comment',
+      conclusion: 'failure',
+      title: 'needs comments',
+    });
+    expect(tracker.snapshot().lockedPrs).toHaveLength(2);
+
+    tracker.recordEvaluation({ ...evalBase, conclusion: 'success', title: 'all done' });
+    const locked = tracker.snapshot().lockedPrs;
+    expect(locked).toHaveLength(1);
+    expect(locked[0]!.check).toBe('merge-lock/min-comment');
+  });
+
+  it('feed:false updates the blocked map without spamming the activity feed', () => {
+    const { tracker } = tracked();
+    tracker.recordEvaluation({ ...evalBase, conclusion: 'failure' }, { feed: false });
+    const snap = tracker.snapshot();
+    expect(snap.recentEvaluations).toHaveLength(0);
+    expect(snap.lockedPrs).toHaveLength(1);
+  });
+
+  it('caps the activity feed at 20 entries, newest first', () => {
+    const { tracker, tick } = tracked();
+    for (let i = 0; i < 25; i++) {
+      tick(1);
+      tracker.recordEvaluation({ ...evalBase, pullNumber: i, conclusion: 'success' });
+    }
+    const recent = tracker.snapshot().recentEvaluations;
+    expect(recent).toHaveLength(20);
+    expect(recent[0]!.pullNumber).toBe(24);
+  });
+
+  it('recordSkipped clears a lock (PR went out of scope)', () => {
+    const { tracker } = tracked();
+    tracker.recordEvaluation({ ...evalBase, conclusion: 'failure' });
+    tracker.recordSkipped({ owner: 'acme', repo: 'widgets', pullNumber: 7, check: evalBase.check });
+    expect(tracker.snapshot().lockedPrs).toHaveLength(0);
+  });
+
+  it('liveLocks filters entries the poller stopped confirming (closed PRs)', () => {
+    const { tracker, tick } = tracked(0);
+    tracker.recordEvaluation({ ...evalBase, conclusion: 'failure' });
+    tick(1000);
+    tracker.recordEvaluation({ ...evalBase, pullNumber: 8, conclusion: 'failure' });
+    const snap = tracker.snapshot();
+    const interval = 300; // 3*300s + 60s grace = 960_000 ms
+    expect(liveLocks(snap, interval, 960_500).map((e) => e.pullNumber)).toEqual([8]);
+    expect(liveLocks(snap, interval, 500)).toHaveLength(2);
+    // Polling disabled: no refresh authority, keep everything.
+    expect(liveLocks(snap, 0, 10_000_000)).toHaveLength(2);
   });
 });
 

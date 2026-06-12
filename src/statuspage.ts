@@ -1,7 +1,9 @@
 import type { AppConfig } from './config.js';
 import {
   deriveOverall,
+  liveLocks,
   type ComponentHealth,
+  type EvaluationStatus,
   type StatusSnapshot,
 } from './status.js';
 import type { JiraAuthMethod } from './types.js';
@@ -32,6 +34,12 @@ const AUTH_LABEL: Record<JiraAuthMethod, string> = {
 
 export function githubApiTarget(cfg: AppConfig): string {
   return cfg.githubBaseUrl ?? 'https://api.github.com';
+}
+
+/** Web UI base for PR links: GHES API root minus /api/v3, else github.com. */
+export function githubWebBase(cfg: AppConfig): string {
+  if (!cfg.githubBaseUrl) return 'https://github.com';
+  return cfg.githubBaseUrl.replace(/\/api\/v3\/?$/, '');
 }
 
 function fmtAgo(ms: number): string {
@@ -124,6 +132,145 @@ function stat(value: number, label: string): string {
   return `<div class="stat"><div class="num">${value}</div><div class="label">${label}</div></div>`;
 }
 
+function enforcementBadge(enforcement: string): string {
+  switch (enforcement) {
+    case 'active':
+      return badge('ok', 'active');
+    case 'evaluate':
+      return badge('neutral', 'evaluate');
+    case 'disabled':
+      return badge('bad', 'disabled');
+    default:
+      return badge('neutral', enforcement);
+  }
+}
+
+function requiredBadge(present: boolean): string {
+  return present ? badge('ok', 'required') : badge('bad', 'missing');
+}
+
+function prLink(e: EvaluationStatus, webBase: string): string {
+  const label = escapeHtml(`${e.owner}/${e.repo}#${e.pullNumber}`);
+  const href = `${webBase}/${encodeURIComponent(e.owner)}/${encodeURIComponent(e.repo)}/pull/${e.pullNumber}`;
+  return `<a href="${escapeHtml(href)}">${label}</a>`;
+}
+
+/** Check names are namespaced ("merge-lock/jira-issue") — the tail segment
+ * is enough inside a table cell. */
+function checkChip(check: string): string {
+  const tail = check.includes('/') ? check.slice(check.lastIndexOf('/') + 1) : check;
+  return `<code title="${escapeHtml(check)}">${escapeHtml(tail)}</code>`;
+}
+
+function rulesetsCard(cfg: AppConfig, snap: StatusSnapshot, now: number): string {
+  const prefix = escapeHtml(cfg.rulesetNamePrefix);
+  const orgs = snap.rulesets;
+  const total = orgs.reduce((n, o) => n + o.rulesets.length, 0);
+  const gateOn = cfg.minPrComments > 0;
+
+  let body: string;
+  if (orgs.length === 0) {
+    body = `<p class="muted">No <code>${prefix}*</code> rulesets seen yet — this table fills in
+after the first poll cycle (one runs at startup). If it stays empty, no org ruleset name
+starts with <code>${prefix}</code>.</p>`;
+  } else {
+    const rows = orgs.flatMap((o) =>
+      o.rulesets.map(
+        (r) => `<tr>
+  <td>${escapeHtml(o.org)}</td>
+  <td><code>${escapeHtml(r.name)}</code></td>
+  <td>${enforcementBadge(r.enforcement)}</td>
+  <td>${requiredBadge(r.requiresJiraCheck)}</td>
+  <td>${
+    gateOn
+      ? requiredBadge(r.requiresCommentCheck)
+      : r.requiresCommentCheck
+        ? badge('neutral', 'still present')
+        : '<span class="muted">—</span>'
+  }</td>
+</tr>`,
+      ),
+    );
+    const seenAt = Math.max(...orgs.map((o) => o.seenAt));
+    body = `<table>
+<thead><tr><th>Org</th><th>Ruleset</th><th>Enforcement</th><th>${checkChip(cfg.checkName)}</th><th>${checkChip(cfg.commentCheckName)}</th></tr></thead>
+<tbody>
+${rows.join('\n')}
+</tbody>
+</table>
+<p class="muted">Last verified ${fmtWhen(seenAt, now)} · refreshed each poll cycle and on
+ruleset events. Only <strong>active</strong> branch rulesets enforce the lock${
+      gateOn ? '' : ` · the ${checkChip(cfg.commentCheckName)} column is inactive while the comment gate is disabled`
+    }.</p>`;
+  }
+
+  return `<section class="card">
+<div class="card-head"><h2>Rulesets</h2>${badge('neutral', `${total} discovered`)}</div>
+${body}
+</section>`;
+}
+
+function pullRequestsCard(cfg: AppConfig, snap: StatusSnapshot, now: number): string {
+  const webBase = githubWebBase(cfg);
+  const locks = liveLocks(snap, cfg.pollIntervalSeconds, now);
+  const headBadge =
+    locks.length > 0
+      ? badge('bad', `${locks.length} merge${locks.length === 1 ? '' : 's'} blocked`)
+      : badge('ok', 'no merges blocked');
+
+  const blockedBody =
+    locks.length === 0
+      ? `<p class="muted">No pull request is currently held by either check (as far as this
+process has seen — restarts clear this view until the next poll cycle rebuilds it).</p>`
+      : `<table>
+<thead><tr><th>Pull request</th><th>Check</th><th>Why it blocks</th><th>Last checked</th></tr></thead>
+<tbody>
+${locks
+  .map(
+    (e) => `<tr>
+  <td>${prLink(e, webBase)}</td>
+  <td>${checkChip(e.check)}</td>
+  <td>${escapeHtml(e.title)}</td>
+  <td>${fmtAgo(now - e.at)}</td>
+</tr>`,
+  )
+  .join('\n')}
+</tbody>
+</table>`;
+
+  const recent = snap.recentEvaluations.slice(0, 10);
+  const recentBody =
+    recent.length === 0
+      ? `<p class="muted">No evaluations yet.</p>`
+      : `<table>
+<thead><tr><th>When</th><th>Pull request</th><th>Check</th><th>Result</th><th>Verdict</th></tr></thead>
+<tbody>
+${recent
+  .map(
+    (e) => `<tr>
+  <td>${fmtAgo(now - e.at)}</td>
+  <td>${prLink(e, webBase)}</td>
+  <td>${checkChip(e.check)}</td>
+  <td>${e.conclusion === 'success' ? badge('ok', 'pass') : badge('bad', 'blocked')}</td>
+  <td>${escapeHtml(e.title)}</td>
+</tr>`,
+  )
+  .join('\n')}
+</tbody>
+</table>
+<p class="muted">Verdict changes only — steady-state poll cycles that confirm an unchanged
+verdict are not repeated here. This view lives in memory and resets on restart; the
+authoritative state is always the check runs on GitHub.</p>`;
+
+  return `<section class="card">
+<div class="card-head"><h2>Pull requests &amp; merge locks</h2>${headBadge}</div>
+<h3>Currently blocked</h3>
+${blockedBody}
+<h3>Recent evaluations</h3>
+${recentBody}
+</section>`;
+}
+
 export function renderStatusPage(
   cfg: AppConfig,
   snap: StatusSnapshot,
@@ -195,6 +342,12 @@ export function renderStatusPage(
   .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 0.55rem 0.75rem; }
   .stat .num { font-size: 1.35rem; font-weight: 700; line-height: 1.25; }
   .stat .label { color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+  section.card h3 { font-size: 0.9rem; margin: 1.1rem 0 0.4rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  section.card h3:first-of-type { margin-top: 0.2rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+  th { text-align: left; color: var(--muted); font-weight: 600; padding: 0.3rem 0.7rem 0.3rem 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 0.4rem 0.7rem 0.4rem 0; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+  tbody tr:last-child td { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -241,6 +394,10 @@ export function renderStatusPage(
 </dl>
 ${coverage}
 </section>
+
+${rulesetsCard(cfg, snap, now)}
+
+${pullRequestsCard(cfg, snap, now)}
 
 <section class="card">
 <div class="card-head"><h2>Process</h2><span class="badge neutral">uptime ${escapeHtml(fmtUptime(now - snap.startedAt))}</span></div>
@@ -295,6 +452,29 @@ export function buildStatusJson(
       lastCounters: snap.poll.lastCounters,
       lastFailAt: iso(snap.poll.lastFailAt),
       lastFailReason: snap.poll.lastFailReason,
+    },
+    rulesets: snap.rulesets.map((o) => ({
+      org: o.org,
+      seenAt: iso(o.seenAt),
+      rulesets: o.rulesets,
+    })),
+    pullRequests: {
+      blocked: liveLocks(snap, cfg.pollIntervalSeconds, now).map((e) => ({
+        repo: `${e.owner}/${e.repo}`,
+        number: e.pullNumber,
+        check: e.check,
+        title: e.title,
+        lastCheckedAt: iso(e.at),
+      })),
+      recentEvaluations: snap.recentEvaluations.map((e) => ({
+        repo: `${e.owner}/${e.repo}`,
+        number: e.pullNumber,
+        check: e.check,
+        trigger: e.trigger,
+        conclusion: e.conclusion,
+        title: e.title,
+        at: iso(e.at),
+      })),
     },
     settings: {
       checkName: cfg.checkName,

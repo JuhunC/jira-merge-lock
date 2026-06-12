@@ -280,6 +280,33 @@ describe('evaluateCommentCheck', () => {
     });
   });
 
+  it('feeds the status tracker: failure locks, success unlocks', async () => {
+    const { StatusTracker } = await import('../../src/status.js');
+    const tracker = new StatusTracker(() => 0);
+    const comments: any[][] = [[{ user: user('author') }], [{ user: user('alice') }]];
+    const { octokit } = makeOctokit({
+      [BRANCH_RULES]: () => IN_SCOPE_RULES,
+      [CHECK_RUNS_READ]: () => ({ check_runs: [] }),
+      [ISSUE_COMMENTS]: () => comments.shift(),
+      [REVIEW_COMMENTS]: () => [],
+      [REVIEWS]: () => [],
+      [CHECK_RUNS_POST]: () => ({ id: 1 }),
+    });
+    const deps = { ...pipelineDeps(octokit), status: tracker };
+
+    await evaluateCommentCheck(deps, PULL, 'poll'); // 0 comments -> failure
+    expect(tracker.snapshot().lockedPrs).toHaveLength(1);
+    expect(tracker.snapshot().lockedPrs[0]).toMatchObject({
+      check: 'merge-lock/min-comment',
+      pullNumber: 7,
+    });
+
+    await evaluateCommentCheck(deps, PULL, 'poll'); // 1 comment -> success
+    expect(tracker.snapshot().lockedPrs).toHaveLength(0);
+    // Both were verdict changes, so both appear in the feed.
+    expect(tracker.snapshot().recentEvaluations).toHaveLength(2);
+  });
+
   it('out of scope: never counts comments, supersedes nothing when no prior run', async () => {
     const posted: any[] = [];
     const { octokit, calls } = makeOctokit({

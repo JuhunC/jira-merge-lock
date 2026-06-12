@@ -244,12 +244,24 @@ Structured JSON logs; one line per noteworthy event:
 state for users and admins: the configured GitHub API target and Jira base URL,
 the outcome of the most recent call to each (connected / failing, with a coarse
 failure category), the last webhook delivery received, and the last poll cycle —
-when it completed, how long it took, and what it covered (org installations,
-discovered `RULESET_NAME_PREFIX*` rulesets, repos scanned, open PRs evaluated,
-Jira lookups). The page auto-refreshes every 10 seconds and is linked from the
-homepage. Like the homepage it is publicly reachable: it shows the GitHub/Jira
-base URLs by design but never credentials or raw error detail (full errors stay
-in the logs). Start troubleshooting here before digging into logs.
+when it completed, how long it took, and what it covered. Two detail sections
+make the lock state inspectable at a glance:
+
+- **Rulesets** — every discovered `RULESET_NAME_PREFIX*` ruleset per org with
+  its enforcement state and whether it currently requires each of the app's
+  checks (`CHECK_NAME` and, when the comment gate is on, `COMMENT_CHECK_NAME`) —
+  drift like a missing required-check entry is visible here before anyone hits it.
+- **Pull requests & merge locks** — the PRs currently held by either check
+  (linked, with the blocking verdict and when it was last confirmed) and a feed
+  of recent verdict *changes*. This view lives in memory and resets on restart;
+  the authoritative state is always the check runs on GitHub.
+
+The page auto-refreshes every 10 seconds and is linked from the homepage. Like
+the homepage it is publicly reachable: it deliberately shows the GitHub/Jira
+base URLs — and, with these sections, org/repo names, PR numbers, and ruleset
+names — but never credentials or raw error detail (full errors stay in the
+logs). Front it with auth if those identifiers are sensitive in your
+environment. Start troubleshooting here before digging into logs.
 
 ### Troubleshooting
 

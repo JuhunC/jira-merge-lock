@@ -48,12 +48,50 @@ export interface WebhookInfo {
   lastAt: number | null;
 }
 
+/** One prefix-matched org ruleset as last seen by a poll cycle. */
+export interface RulesetStatus {
+  id: number;
+  name: string;
+  enforcement: string; // "active" | "evaluate" | "disabled" | "unknown"
+  requiresJiraCheck: boolean;
+  requiresCommentCheck: boolean;
+}
+
+export interface OrgRulesets {
+  org: string;
+  seenAt: number;
+  rulesets: RulesetStatus[];
+}
+
+/** One completed check evaluation (either check). Feeds the activity feed
+ * and the currently-blocked map on /status. */
+export interface EvaluationStatus {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  /** Check-run name (cfg.checkName or cfg.commentCheckName). */
+  check: string;
+  trigger: string;
+  conclusion: 'success' | 'failure';
+  /** Verdict title — composed by this codebase, no raw error text. */
+  title: string;
+  at: number;
+}
+
 export interface StatusSnapshot {
   startedAt: number;
   github: ComponentHealth;
   jira: ComponentHealth;
   webhook: WebhookInfo;
   poll: PollHealth;
+  /** Sorted by org; each org's set is replaced wholesale per poll. */
+  rulesets: OrgRulesets[];
+  /** Newest first, verdict CHANGES only (steady-state confirmations are
+   * recorded silently into lockedPrs but not repeated here). */
+  recentEvaluations: EvaluationStatus[];
+  /** PR+check pairs whose most recent evaluation failed, newest first.
+   * Render-side freshness filtering: see liveLocks(). */
+  lockedPrs: EvaluationStatus[];
 }
 
 /** Structural subset of StatusTracker that JiraClient depends on. */
@@ -66,12 +104,18 @@ function freshComponent(): ComponentHealth {
   return { state: 'pending', lastOkAt: null, lastFailAt: null, lastFailReason: null };
 }
 
+const RECENT_LIMIT = 20;
+const LOCKS_LIMIT = 200;
+
 export class StatusTracker implements JiraStatusRecorder {
   readonly startedAt: number;
   private readonly now: () => number;
   private readonly github = freshComponent();
   private readonly jira = freshComponent();
   private webhook: WebhookInfo = { lastEvent: null, lastAt: null };
+  private readonly rulesetsByOrg = new Map<string, OrgRulesets>();
+  private readonly recent: EvaluationStatus[] = [];
+  private readonly locks = new Map<string, EvaluationStatus>();
   private readonly poll: PollHealth = {
     state: 'pending',
     lastStartedAt: null,
@@ -113,6 +157,52 @@ export class StatusTracker implements JiraStatusRecorder {
     this.webhook = { lastEvent: event, lastAt: this.now() };
   }
 
+  /** Replace one org's ruleset view (a poll cycle re-discovers the full set). */
+  recordRulesets(org: string, rulesets: RulesetStatus[]): void {
+    this.rulesetsByOrg.set(org, {
+      org,
+      seenAt: this.now(),
+      rulesets: rulesets.map((r) => ({ ...r })),
+    });
+  }
+
+  private static lockKey(e: { owner: string; repo: string; pullNumber: number; check: string }): string {
+    return `${e.owner}/${e.repo}#${e.pullNumber}|${e.check}`;
+  }
+
+  /** Record a completed evaluation. `feed: false` updates only the blocked
+   * map — used by poll cycles whose verdict did not change, so the activity
+   * feed shows changes instead of repeating every PR every cycle. */
+  recordEvaluation(e: Omit<EvaluationStatus, 'at'>, opts?: { feed?: boolean }): void {
+    const entry: EvaluationStatus = { ...e, at: this.now() };
+    if (opts?.feed !== false) {
+      this.recent.unshift(entry);
+      if (this.recent.length > RECENT_LIMIT) this.recent.length = RECENT_LIMIT;
+    }
+    const key = StatusTracker.lockKey(entry);
+    if (entry.conclusion === 'failure') {
+      this.locks.set(key, entry);
+      if (this.locks.size > LOCKS_LIMIT) {
+        let oldestKey: string | undefined;
+        let oldestAt = Infinity;
+        for (const [k, v] of this.locks) {
+          if (v.at < oldestAt) {
+            oldestAt = v.at;
+            oldestKey = k;
+          }
+        }
+        if (oldestKey !== undefined) this.locks.delete(oldestKey);
+      }
+    } else {
+      this.locks.delete(key);
+    }
+  }
+
+  /** A PR went out of scope (skipped run) — it can no longer be blocked by us. */
+  recordSkipped(ref: { owner: string; repo: string; pullNumber: number; check: string }): void {
+    this.locks.delete(StatusTracker.lockKey(ref));
+  }
+
   recordPollStarted(): void {
     this.poll.state = 'running';
     this.poll.lastStartedAt = this.now();
@@ -142,8 +232,29 @@ export class StatusTracker implements JiraStatusRecorder {
         ...this.poll,
         lastCounters: this.poll.lastCounters ? { ...this.poll.lastCounters } : null,
       },
+      rulesets: [...this.rulesetsByOrg.values()]
+        .sort((a, b) => a.org.localeCompare(b.org))
+        .map((o) => ({ ...o, rulesets: o.rulesets.map((r) => ({ ...r })) })),
+      recentEvaluations: this.recent.map((e) => ({ ...e })),
+      lockedPrs: [...this.locks.values()]
+        .sort((a, b) => b.at - a.at)
+        .map((e) => ({ ...e })),
     };
   }
+}
+
+/** Blocked entries fresh enough to trust: with polling on, anything the
+ * poller has not confirmed within ~3 intervals is gone (PR closed or merged
+ * by an admin) and must not be displayed as a live lock. With polling off
+ * there is no refresh authority, so everything is kept. */
+export function liveLocks(
+  snap: StatusSnapshot,
+  pollIntervalSeconds: number,
+  now: number,
+): EvaluationStatus[] {
+  if (pollIntervalSeconds <= 0) return snap.lockedPrs;
+  const maxAgeMs = 3 * pollIntervalSeconds * 1000 + 60_000;
+  return snap.lockedPrs.filter((e) => now - e.at <= maxAgeMs);
 }
 
 /** A cycle running longer than this counts as stuck (the poller's own

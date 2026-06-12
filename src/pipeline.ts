@@ -12,6 +12,7 @@ import { extractJiraKeys } from './extract.js';
 import type { AppConfig } from './config.js';
 import type { JiraClient } from './jira.js';
 import { isInScope, type ScopeCache } from './rulesets.js';
+import type { StatusTracker } from './status.js';
 import { JiraAuthError, JiraUnavailableError } from './types.js';
 import type {
   EvaluationTrigger,
@@ -29,6 +30,8 @@ export interface PipelineDeps {
   scopeCache: ScopeCache;
   jiraCycleCache?: JiraCycleCache;
   log: LoggerLike;
+  /** Optional sink for /status — evaluation outcomes and blocked-PR state. */
+  status?: StatusTracker;
 }
 
 type LatestRun = Awaited<ReturnType<typeof findLatestCheckRun>>;
@@ -133,6 +136,7 @@ export async function evaluatePullRequest(
       },
       `PR out of scope — no active ruleset requires "${cfg.checkName}" on base branch "${pull.baseRef}"`,
     );
+    deps.status?.recordSkipped({ ...pull, check: cfg.checkName });
     await postSkippedRun(
       octokit,
       { ...checkRef, appId: cfg.appId },
@@ -213,6 +217,15 @@ async function evaluateLive(
       }
     }
     await completeCheckRun(octokit, checkRef, checkRunId, completion);
+    deps.status?.recordEvaluation({
+      owner: pull.owner,
+      repo: pull.repo,
+      pullNumber: pull.pullNumber,
+      check: cfg.checkName,
+      trigger,
+      conclusion: completion.conclusion as 'success' | 'failure',
+      title: completion.title,
+    });
   } catch (err) {
     // No exit path may strand the run at in_progress (a required check stuck
     // pending blocks the PR forever): complete as failure, then rethrow.
@@ -317,6 +330,7 @@ export async function evaluateCommentCheck(
       },
       `PR out of scope — no active ruleset requires "${cfg.checkName}" on base branch "${pull.baseRef}"`,
     );
+    deps.status?.recordSkipped({ ...pull, check: cfg.commentCheckName });
     await postSkippedRun(
       octokit,
       { ...checkRef, appId: cfg.appId },
@@ -370,9 +384,10 @@ export async function evaluateCommentCheck(
     throw err;
   }
 
+  const changed = !(latest !== null && latest.externalId === verdict.fingerprint);
   if (checkRunId !== undefined) {
     await completeCheckRun(octokit, checkRef, checkRunId, completionFromVerdict(verdict));
-  } else if (latest !== null && latest.externalId === verdict.fingerprint) {
+  } else if (!changed) {
     log.debug(
       {
         evt: 'check_write',
@@ -388,6 +403,19 @@ export async function evaluateCommentCheck(
   } else {
     await postCheckRun(octokit, checkRef, verdict);
   }
+  deps.status?.recordEvaluation(
+    {
+      owner: pull.owner,
+      repo: pull.repo,
+      pullNumber: pull.pullNumber,
+      check: cfg.commentCheckName,
+      trigger,
+      conclusion: verdict.conclusion,
+      title: verdict.title,
+    },
+    // Live runs always feed; silent poll confirmations only refresh the map.
+    { feed: trigger !== 'poll' || changed },
+  );
 
   log.info(
     {
@@ -458,7 +486,8 @@ async function evaluatePoll(
     }
   }
 
-  if (latest !== null && latest.externalId === verdict.fingerprint) {
+  const changed = !(latest !== null && latest.externalId === verdict.fingerprint);
+  if (!changed) {
     log.debug(
       {
         evt: 'check_write',
@@ -473,6 +502,20 @@ async function evaluatePoll(
   } else {
     await postCheckRun(octokit, checkRef, verdict);
   }
+  // Unchanged verdicts refresh the blocked-PR map silently (feed: false) —
+  // the /status activity feed shows changes, not every PR every cycle.
+  deps.status?.recordEvaluation(
+    {
+      owner: pull.owner,
+      repo: pull.repo,
+      pullNumber: pull.pullNumber,
+      check: cfg.checkName,
+      trigger: 'poll',
+      conclusion: verdict.conclusion,
+      title: verdict.title,
+    },
+    { feed: changed },
+  );
 
   log.info(
     {

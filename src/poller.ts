@@ -5,6 +5,7 @@ import {
   autoconfigureOrg,
   discoverPrefixRulesets,
   repoCouldMatch,
+  summarizeRulesets,
   type ScopeCache,
 } from './rulesets.js';
 import type { StatusTracker } from './status.js';
@@ -150,6 +151,7 @@ export function createPoller(deps: PollerDeps): Poller {
     // branch-rules gate inside the pipeline.
     const prefixRulesets = await discoverPrefixRulesets(octokit, org, cfg, log);
     counters.rulesets += prefixRulesets.length;
+    deps.status?.recordRulesets(org, summarizeRulesets(prefixRulesets, cfg));
     const surviving = repos.filter((repo) => repoCouldMatch(prefixRulesets, repo));
     counters.repos_pruned += repos.length - surviving.length;
 
@@ -197,7 +199,15 @@ export function createPoller(deps: PollerDeps): Poller {
         };
         try {
           await evaluateAllChecks(
-            { octokit, jira: deps.jira, cfg, scopeCache: deps.scopeCache, jiraCycleCache, log },
+            {
+              octokit,
+              jira: deps.jira,
+              cfg,
+              scopeCache: deps.scopeCache,
+              jiraCycleCache,
+              log,
+              status: deps.status,
+            },
             pull,
             'poll',
           );

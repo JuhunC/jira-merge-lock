@@ -2,6 +2,7 @@ import { loadConfig, type AppConfig } from './config.js';
 import { JiraClient } from './jira.js';
 import { evaluateAllChecks, evaluateCommentCheck, evaluatePullRequest } from './pipeline.js';
 import { autoconfigureOrg, ScopeCache } from './rulesets.js';
+import type { StatusTracker } from './status.js';
 import type { EvaluationTrigger, LoggerLike, OctokitLike, PullRef } from './types.js';
 
 export interface AppDeps {
@@ -11,7 +12,7 @@ export interface AppDeps {
    * ruleset changes. The poller itself is owned by main.ts, never started here. */
   requestInstallationPoll?: (installationId: number) => void;
   /** Operational-status sink for the /status page (owned by main.ts). */
-  status?: { recordWebhook(event: string): void };
+  status?: StatusTracker;
 }
 
 // merge_group.head_ref looks like refs/heads/gh-readonly-queue/<base-branch>/pr-<n>-<sha>.
@@ -63,6 +64,7 @@ export function makeApp(cfg: AppConfig, deps?: AppDeps): (app: any, options?: an
       cfg,
       scopeCache,
       log: context.log as LoggerLike,
+      status: deps?.status,
     });
 
     /** Full evaluation: the Jira check + the comment check when enabled. */
