@@ -7,15 +7,16 @@ import {
   type StatusSnapshot,
 } from './status.js';
 import type { JiraAuthMethod } from './types.js';
-import { APP_NAME, escapeHtml, SHARED_CSS } from './webui.js';
+import { APP_NAME, escapeHtml, renderPage } from './webui.js';
 
 /**
  * Live operational status served at GET /status (HTML, auto-refreshing) and
  * GET /status.json. The page is publicly reachable, like the homepage. It
- * DELIBERATELY shows the configured GitHub and Jira base URLs (a deployment
- * decision — operators who consider those sensitive must front the service
- * with auth), but never credentials, the app id, or raw error messages —
- * only the fixed failure categories recorded in StatusTracker.
+ * DELIBERATELY shows the configured GitHub and Jira base URLs plus org/repo/
+ * PR identifiers and ruleset names (a deployment decision — operators who
+ * consider those sensitive must front the service with auth), but never
+ * credentials, the app id, or raw error messages — only the fixed failure
+ * categories recorded in StatusTracker.
  */
 
 const OVERALL_LABEL = {
@@ -79,15 +80,20 @@ function badge(kind: 'ok' | 'bad' | 'neutral', label: string): string {
   return `<span class="badge ${kind}">${escapeHtml(label)}</span>`;
 }
 
-function stateBadge(c: ComponentHealth): string {
+function componentWord(c: ComponentHealth): { dot: string; word: string } {
   switch (c.state) {
     case 'pending':
-      return badge('neutral', 'not yet attempted');
+      return { dot: 'neutral', word: 'not yet attempted' };
     case 'ok':
-      return badge('ok', 'connected');
+      return { dot: 'ok', word: 'connected' };
     case 'failed':
-      return badge('bad', 'failing');
+      return { dot: 'bad', word: 'failing' };
   }
+}
+
+function stateBadge(c: ComponentHealth): string {
+  const { dot, word } = componentWord(c);
+  return badge(dot as 'ok' | 'bad' | 'neutral', word);
 }
 
 function failureCell(c: ComponentHealth, now: number): string {
@@ -96,17 +102,22 @@ function failureCell(c: ComponentHealth, now: number): string {
   return `${fmtWhen(c.lastFailAt, now)}${reason}`;
 }
 
-function pollBadge(state: StatusSnapshot['poll']['state']): string {
+function pollWord(state: StatusSnapshot['poll']['state']): { dot: string; word: string } {
   switch (state) {
     case 'pending':
-      return badge('neutral', 'no cycle yet');
+      return { dot: 'neutral', word: 'no cycle yet' };
     case 'running':
-      return badge('neutral', 'running');
+      return { dot: 'neutral', word: 'running' };
     case 'ok':
-      return badge('ok', 'succeeded');
+      return { dot: 'ok', word: 'succeeded' };
     case 'failed':
-      return badge('bad', 'failed');
+      return { dot: 'bad', word: 'failed' };
   }
+}
+
+function pollBadge(state: StatusSnapshot['poll']['state']): string {
+  const { dot, word } = pollWord(state);
+  return badge(dot as 'ok' | 'bad' | 'neutral', word);
 }
 
 function pollCycleCell(poll: StatusSnapshot['poll'], now: number): string {
@@ -130,6 +141,14 @@ function pollCycleCell(poll: StatusSnapshot['poll'], now: number): string {
 
 function stat(value: number, label: string): string {
   return `<div class="stat"><div class="num">${value}</div><div class="label">${label}</div></div>`;
+}
+
+function vital(href: string, label: string, dot: string, value: string, sub: string): string {
+  return `<a class="vital" href="${href}">
+<div class="vlabel">${escapeHtml(label)}</div>
+<div class="vvalue"><span class="dot ${dot}"></span>${escapeHtml(value)}</div>
+<div class="vsub">${sub}</div>
+</a>`;
 }
 
 function enforcementBadge(enforcement: string): string {
@@ -204,7 +223,7 @@ ruleset events. Only <strong>active</strong> branch rulesets enforce the lock${
     }.</p>`;
   }
 
-  return `<section class="card">
+  return `<section class="card" id="rulesets">
 <div class="card-head"><h2>Rulesets</h2>${badge('neutral', `${total} discovered`)}</div>
 ${body}
 </section>`;
@@ -262,7 +281,7 @@ ${recent
 verdict are not repeated here. This view lives in memory and resets on restart; the
 authoritative state is always the check runs on GitHub.</p>`;
 
-  return `<section class="card">
+  return `<section class="card" id="pulls">
 <div class="card-head"><h2>Pull requests &amp; merge locks</h2>${headBadge}</div>
 <h3>Currently blocked</h3>
 ${blockedBody}
@@ -314,53 +333,34 @@ export function renderStatusPage(
 </div>`
     : '';
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="10">
-<title>${APP_NAME} — status</title>
-<style>${SHARED_CSS}
-  .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-  .hero .subtitle { margin-bottom: 1rem; }
-  .badge.overall { font-size: 0.95rem; padding: 0.25em 0.9em; margin-top: 0.3rem; }
-  .card-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.55rem; margin-bottom: 0.85rem;
-  }
-  .card-head h2 { font-size: 1.02rem; margin: 0; }
-  dl.rows { display: grid; grid-template-columns: 10.5rem 1fr; row-gap: 0.5rem; column-gap: 1rem; margin: 0; }
-  dl.rows dt { font-weight: 600; color: var(--muted); font-size: 0.9em; padding-top: 0.12em; }
-  dl.rows dd { margin: 0; overflow-wrap: anywhere; }
-  @media (max-width: 560px) {
-    dl.rows { grid-template-columns: 1fr; row-gap: 0.1rem; }
-    dl.rows dd { margin-bottom: 0.6rem; }
-  }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.6rem; }
-  .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 0.55rem 0.75rem; }
-  .stat .num { font-size: 1.35rem; font-weight: 700; line-height: 1.25; }
-  .stat .label { color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
-  section.card h3 { font-size: 0.9rem; margin: 1.1rem 0 0.4rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  section.card h3:first-of-type { margin-top: 0.2rem; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
-  th { text-align: left; color: var(--muted); font-weight: 600; padding: 0.3rem 0.7rem 0.3rem 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  td { padding: 0.4rem 0.7rem 0.4rem 0; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
-  tbody tr:last-child td { border-bottom: none; }
-</style>
-</head>
-<body>
-<div class="hero">
-  <div>
-    <h1><code>${APP_NAME}</code> — deployment status</h1>
-    <p class="subtitle">Auto-refreshes every 10 seconds · <a href="/status.json">JSON</a> ·
-    <a href="/">merge-check guidelines</a></p>
-  </div>
-  <span class="badge overall ${OVERALL_CLASS[overall]}">${OVERALL_LABEL[overall]}</span>
-</div>
+  const locks = liveLocks(snap, cfg.pollIntervalSeconds, now);
+  const github = componentWord(snap.github);
+  const jira = componentWord(snap.jira);
+  const poll = pollWord(snap.poll.state);
+  const vitals = `<div class="vitals">
+${vital('#github', 'GitHub', github.dot, github.word, `<code>${escapeHtml(githubApiTarget(cfg))}</code>`)}
+${vital('#jira', 'Jira', jira.dot, jira.word, `<code>${escapeHtml(cfg.jira.baseUrl)}</code>`)}
+${vital(
+    '#polling',
+    'Last poll cycle',
+    poll.dot,
+    poll.word,
+    snap.poll.state === 'ok'
+      ? `took ${escapeHtml(fmtDuration(snap.poll.lastDurationMs))}`
+      : escapeHtml(schedule),
+  )}
+${vital(
+    '#pulls',
+    'Merge locks',
+    locks.length > 0 ? 'bad' : 'ok',
+    `${locks.length} blocked`,
+    'pull requests currently held',
+  )}
+</div>`;
 
-<section class="card">
+  const body = `${vitals}
+
+<section class="card" id="github">
 <div class="card-head"><h2>GitHub</h2>${stateBadge(snap.github)}</div>
 <dl class="rows">
   <dt>API target</dt><dd><code>${escapeHtml(githubApiTarget(cfg))}</code></dd>
@@ -370,7 +370,7 @@ export function renderStatusPage(
 </dl>
 </section>
 
-<section class="card">
+<section class="card" id="jira">
 <div class="card-head"><h2>Jira</h2>${stateBadge(snap.jira)}</div>
 <dl class="rows">
   <dt>Base URL</dt><dd><code>${escapeHtml(cfg.jira.baseUrl)}</code></dd>
@@ -380,7 +380,7 @@ export function renderStatusPage(
 </dl>
 </section>
 
-<section class="card">
+<section class="card" id="polling">
 <div class="card-head"><h2>Background polling &amp; rulesets</h2>${pollBadge(snap.poll.state)}</div>
 <dl class="rows">
   <dt>Schedule</dt><dd>${escapeHtml(schedule)}</dd>
@@ -399,22 +399,71 @@ ${rulesetsCard(cfg, snap, now)}
 
 ${pullRequestsCard(cfg, snap, now)}
 
-<section class="card">
+<section class="card" id="process">
 <div class="card-head"><h2>Process</h2><span class="badge neutral">uptime ${escapeHtml(fmtUptime(now - snap.startedAt))}</span></div>
 <dl class="rows">
   <dt>Started</dt><dd>${fmtWhen(snap.startedAt, now)}</dd>
 </dl>
 </section>
 
-<footer>
 <p class="muted">Failure entries show coarse categories only; full error detail is in the
 server logs. Jira connectivity is exercised only when an evaluation actually references
 Jira issues, so an old “last success” timestamp on a quiet deployment is not a problem
-by itself.</p>
-</footer>
-</body>
-</html>
-`;
+by itself.</p>`;
+
+  return renderPage({
+    title: `${APP_NAME} — status`,
+    heading: 'Deployment status',
+    tagline: `Live deployment status of this ${APP_NAME} instance — GitHub and Jira connectivity,
+ruleset coverage, and the pull requests it currently holds.`,
+    headerAside: `<span class="badge overall ${OVERALL_CLASS[overall]}">${OVERALL_LABEL[overall]}</span>
+<span class="live"><span class="live-dot"></span>auto-refreshes every 10 seconds · <a href="/status.json">JSON</a></span>`,
+    nav: [
+      { href: '#github', label: 'GitHub' },
+      { href: '#jira', label: 'Jira' },
+      { href: '#polling', label: 'Polling' },
+      { href: '#rulesets', label: 'Rulesets' },
+      { href: '#pulls', label: 'Pull requests' },
+      { href: '#process', label: 'Process' },
+    ],
+    extraHead: `<meta http-equiv="refresh" content="10">\n`,
+    extraCss: `
+  .live a { color: var(--band-muted); }
+  .vitals { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.8rem; margin: 0.2rem 0 1.2rem; }
+  a.vital {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 0.8rem 1rem 0.9rem; box-shadow: var(--shadow);
+  }
+  a.vital:hover { border-color: var(--accent); }
+  .vital .vlabel { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin-bottom: 0.4rem; }
+  .vital .vvalue { font-size: 1rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem; }
+  .vital .vsub { color: var(--muted); font-size: 0.78rem; margin-top: 0.3rem; overflow-wrap: anywhere; }
+  .vital .vsub code { background: none; padding: 0; color: inherit; }
+  .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; flex: none; }
+  .dot.ok { background: var(--ok); }
+  .dot.bad { background: var(--bad); }
+  .dot.neutral { background: var(--muted); }
+  dl.rows { display: grid; grid-template-columns: 10.5rem 1fr; row-gap: 0.5rem; column-gap: 1rem; margin: 0; }
+  dl.rows dt { font-weight: 600; color: var(--muted); font-size: 0.9em; padding-top: 0.12em; }
+  dl.rows dd { margin: 0; overflow-wrap: anywhere; }
+  @media (max-width: 560px) {
+    dl.rows { grid-template-columns: 1fr; row-gap: 0.1rem; }
+    dl.rows dd { margin-bottom: 0.6rem; }
+  }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.6rem; }
+  .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 0.55rem 0.75rem; }
+  .stat .num { font-size: 1.35rem; font-weight: 700; line-height: 1.25; }
+  .stat .label { color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+  section.card h3 { font-size: 0.78rem; margin: 1.1rem 0 0.4rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; }
+  section.card h3:first-of-type { margin-top: 0.2rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+  th { text-align: left; color: var(--muted); font-weight: 600; padding: 0.3rem 0.7rem 0.3rem 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 0.4rem 0.7rem 0.4rem 0; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+  tbody tr:last-child td { border-bottom: none; }
+`,
+    body,
+  });
 }
 
 export function buildStatusJson(
