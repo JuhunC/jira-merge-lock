@@ -44,6 +44,12 @@ export interface AppConfig {
   rulesetNamePrefix: string;
   rulesetAutoconfigure: boolean;
   checkName: string;
+  /** Minimum number of PR comments from someone OTHER than the PR author
+   * required to merge. 0 (default) disables the comment check entirely. */
+  minPrComments: number;
+  /** Name of the second check run posted when minPrComments > 0.
+   * Defaults to "<checkName>-comments". */
+  commentCheckName: string;
   pollIntervalSeconds: number;
   pollConcurrency: number;
   /** Public base URL of this deployment (no trailing slash). Optional —
@@ -94,6 +100,8 @@ const envSchema = z.object({
   RULESET_NAME_PREFIX: z.string().min(1).default('jira-merge-lock'),
   RULESET_AUTOCONFIGURE: boolString.default(true),
   CHECK_NAME: z.string().min(1).max(100).default('jira-merge-lock'),
+  MIN_PR_COMMENTS: z.coerce.number().int().min(0).default(0),
+  COMMENT_CHECK_NAME: z.string().min(1).max(100).optional(),
   POLL_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(300),
   POLL_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
   PUBLIC_URL: z.string().min(1).optional(),
@@ -218,6 +226,16 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     }
   }
 
+  // Two distinct check runs need two distinct names. The derived default can
+  // exceed GitHub's 100-char check-name cap when CHECK_NAME is near it.
+  const commentCheckName = e.COMMENT_CHECK_NAME ?? `${e.CHECK_NAME}-comments`;
+  if (commentCheckName === e.CHECK_NAME) {
+    problems.push('COMMENT_CHECK_NAME: must differ from CHECK_NAME (two separate check runs)');
+  }
+  if (commentCheckName.length > 100) {
+    problems.push('COMMENT_CHECK_NAME: must be at most 100 characters (GitHub check-name limit)');
+  }
+
   if (problems.length > 0) throw new ConfigError(problems);
 
   const configHash = createHash('sha256')
@@ -262,6 +280,8 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     rulesetNamePrefix: e.RULESET_NAME_PREFIX,
     rulesetAutoconfigure: e.RULESET_AUTOCONFIGURE,
     checkName: e.CHECK_NAME,
+    minPrComments: e.MIN_PR_COMMENTS,
+    commentCheckName,
     pollIntervalSeconds: e.POLL_INTERVAL_SECONDS,
     pollConcurrency: e.POLL_CONCURRENCY,
     publicUrl,

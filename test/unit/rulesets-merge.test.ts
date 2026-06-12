@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { injectRequiredCheck, stripReadOnlyRulesetFields } from '../../src/rulesets.js';
+import { convergeRequiredChecks, stripReadOnlyRulesetFields } from '../../src/rulesets.js';
 import type { OrgRuleset, RulesetRule } from '../../src/types.js';
 
 const CHECK = 'jira-merge-lock';
+const COMMENT_CHECK = 'jira-merge-lock-comments';
 const APP_ID = 12345;
 
 const ourEntry = { context: CHECK, integration_id: APP_ID };
+const ourCommentEntry = { context: COMMENT_CHECK, integration_id: APP_ID };
+
+/** The original single-context behavior is the [checkName]-only call. */
+function injectRequiredCheck(
+  rules: RulesetRule[] | undefined,
+  checkName: string,
+  appId: number,
+): { rules: RulesetRule[]; changed: boolean } {
+  return convergeRequiredChecks(rules, [checkName], appId);
+}
 
 function rscRule(
   entries: Array<{ context: string; integration_id?: number }>,
@@ -27,7 +38,7 @@ const otherRules: RulesetRule[] = [
   { type: 'non_fast_forward' },
 ];
 
-describe('injectRequiredCheck', () => {
+describe('convergeRequiredChecks (single context)', () => {
   describe('table-driven', () => {
     const freshRsc: RulesetRule = {
       type: 'required_status_checks',
@@ -156,6 +167,52 @@ describe('injectRequiredCheck', () => {
       expect(twice.changed).toBe(false);
       expect(JSON.stringify(twice.rules)).toBe(JSON.stringify(once.rules));
     }
+  });
+});
+
+describe('convergeRequiredChecks (multiple contexts)', () => {
+  it('injects both checks into an empty ruleset', () => {
+    const { rules, changed } = convergeRequiredChecks([], [CHECK, COMMENT_CHECK], APP_ID);
+    expect(changed).toBe(true);
+    expect(rules[0]!.parameters!.required_status_checks).toEqual([ourEntry, ourCommentEntry]);
+  });
+
+  it('adds only the missing context, leaving foreign entries untouched', () => {
+    const foreign = { context: 'ci/build', integration_id: 999 };
+    const input = [rscRule([foreign, ourEntry])];
+    const { rules, changed } = convergeRequiredChecks(input, [CHECK, COMMENT_CHECK], APP_ID);
+    expect(changed).toBe(true);
+    expect(rules[0]!.parameters!.required_status_checks).toEqual([
+      foreign,
+      ourEntry,
+      ourCommentEntry,
+    ]);
+  });
+
+  it('removes our own stale entry when its context is no longer desired (feature disabled)', () => {
+    const foreign = { context: 'ci/build', integration_id: 999 };
+    const input = [rscRule([foreign, ourEntry, ourCommentEntry])];
+    const { rules, changed } = convergeRequiredChecks(input, [CHECK], APP_ID);
+    expect(changed).toBe(true);
+    expect(rules[0]!.parameters!.required_status_checks).toEqual([foreign, ourEntry]);
+  });
+
+  it('never removes same-named entries pinned to ANOTHER app, or unpinned ones', () => {
+    const otherApps = [
+      { context: COMMENT_CHECK, integration_id: 777 }, // another integration's check
+      { context: 'manual-gate' }, // unpinned, admin-managed
+    ];
+    const input = [rscRule([...otherApps, ourEntry])];
+    const { rules, changed } = convergeRequiredChecks(input, [CHECK], APP_ID);
+    expect(changed).toBe(false);
+    expect(rules[0]!.parameters!.required_status_checks).toEqual([...otherApps, ourEntry]);
+  });
+
+  it('is idempotent with two contexts', () => {
+    const once = convergeRequiredChecks([...otherRules], [CHECK, COMMENT_CHECK], APP_ID);
+    const twice = convergeRequiredChecks(once.rules, [CHECK, COMMENT_CHECK], APP_ID);
+    expect(twice.changed).toBe(false);
+    expect(JSON.stringify(twice.rules)).toBe(JSON.stringify(once.rules));
   });
 });
 

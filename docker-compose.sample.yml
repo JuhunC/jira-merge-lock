@@ -76,6 +76,13 @@ services:
       # "true": PRs whose commits reference NO Jira issue are blocked too.
       # REQUIRE_ISSUE_KEY: "false"
 
+      # Discussion gate: block the merge until the PR has at least N comments
+      # from someone OTHER than its author (bots don't count), posted as a
+      # SECOND required check. "0" disables. Needs the Issues:read permission
+      # + comment/review events on the app (see README) — added in v0.5.0.
+      # MIN_PR_COMMENTS: "0"
+      # COMMENT_CHECK_NAME: "jira-merge-lock-comments"
+
       # How often Jira is re-checked for open PRs (seconds). "0" disables
       # polling — locks then only update on PR events / manual re-runs.
       # POLL_INTERVAL_SECONDS: "300"

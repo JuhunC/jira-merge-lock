@@ -289,6 +289,8 @@ export function buildStatusJson(
       rulesetNamePrefix: cfg.rulesetNamePrefix,
       rulesetAutoconfigure: cfg.rulesetAutoconfigure,
       requireIssueKey: cfg.requireIssueKey,
+      minPrComments: cfg.minPrComments,
+      commentCheckName: cfg.minPrComments > 0 ? cfg.commentCheckName : null,
       doneStatuses: cfg.doneStatuses,
       doneUseCategory: cfg.doneUseCategory,
       projectKeys: cfg.projectKeys,

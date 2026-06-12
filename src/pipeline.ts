@@ -5,6 +5,7 @@ import {
   postInProgressRun,
   postSkippedRun,
 } from './checks.js';
+import { buildCommentVerdict, countNonAuthorComments } from './comments.js';
 import { listPrCommitMessages } from './commits.js';
 import { buildErrorVerdict, buildVerdictFromOutcomes } from './evaluate.js';
 import { extractJiraKeys } from './extract.js';
@@ -254,6 +255,153 @@ async function evaluateLive(
       duration_ms: Date.now() - startedAt,
     },
     'pull request evaluated',
+  );
+}
+
+/** Combined entry point for callers that own a whole PR evaluation (webhook
+ * pull_request events, rerequested suites, merge groups, the poller): the
+ * Jira check always, plus the comment check when MIN_PR_COMMENTS > 0.
+ * Sequential on purpose — a thrown Jira-check error (e.g. GitHub API failure)
+ * skips the comment check; the caller's retry policy re-runs both. */
+export async function evaluateAllChecks(
+  deps: PipelineDeps,
+  pull: PullRef,
+  trigger: EvaluationTrigger,
+  opts?: { checkHeadSha?: string },
+): Promise<void> {
+  await evaluatePullRequest(deps, pull, trigger, opts);
+  if (deps.cfg.minPrComments > 0) {
+    await evaluateCommentCheck(deps, pull, trigger, opts);
+  }
+}
+
+/** The discussion gate (MIN_PR_COMMENTS): a second, independent check run.
+ * Mirrors evaluatePullRequest's two completion styles — live posts an
+ * in_progress run and completes it (never stranding it), poll does silent
+ * create-only writes with fingerprint dedupe. Scope is the same gate as the
+ * Jira check: both contexts are injected into prefix rulesets together. */
+export async function evaluateCommentCheck(
+  deps: PipelineDeps,
+  pull: PullRef,
+  trigger: EvaluationTrigger,
+  opts?: { checkHeadSha?: string },
+): Promise<void> {
+  const { octokit, cfg, scopeCache, log } = deps;
+  const startedAt = Date.now();
+  const checkRef: CheckRefWithSha = {
+    owner: pull.owner,
+    repo: pull.repo,
+    headSha: opts?.checkHeadSha ?? pull.headSha,
+    checkName: cfg.commentCheckName,
+  };
+
+  const inScope = await isInScope(
+    octokit,
+    { owner: pull.owner, repo: pull.repo, branch: pull.baseRef },
+    cfg,
+    scopeCache,
+    log,
+  );
+  if (!inScope) {
+    const logFn = trigger === 'poll' ? log.debug.bind(log) : log.info.bind(log);
+    logFn(
+      {
+        evt: 'out_of_scope',
+        check: cfg.commentCheckName,
+        owner: pull.owner,
+        repo: pull.repo,
+        pr: pull.pullNumber,
+        base: pull.baseRef,
+        trigger,
+        prefix: cfg.rulesetNamePrefix,
+      },
+      `PR out of scope — no active ruleset requires "${cfg.checkName}" on base branch "${pull.baseRef}"`,
+    );
+    await postSkippedRun(
+      octokit,
+      { ...checkRef, appId: cfg.appId },
+      `Branch \`${pull.baseRef}\` is not covered by any active \`${cfg.rulesetNamePrefix}*\` ruleset requiring this check.`,
+      cfg.configHash,
+    );
+    return;
+  }
+
+  const latest = await findLatestCheckRun(octokit, { ...checkRef, appId: cfg.appId });
+
+  let checkRunId: number | undefined;
+  if (trigger !== 'poll') {
+    checkRunId = await postInProgressRun(octokit, checkRef, {
+      title: 'Counting comments from reviewers…',
+      summary: `Verifying that this pull request has at least ${cfg.minPrComments} comment(s) from someone other than its author.`,
+    });
+  }
+
+  let verdict: Verdict;
+  try {
+    const { count } = await countNonAuthorComments(octokit, pull, cfg.minPrComments);
+    verdict = buildCommentVerdict(count, cfg);
+  } catch (err) {
+    // Same invariant as the Jira check: a posted in_progress run is never
+    // stranded — complete as failure, then rethrow for the caller's policy.
+    if (checkRunId !== undefined) {
+      try {
+        await completeCheckRun(octokit, checkRef, checkRunId, {
+          conclusion: 'failure',
+          externalId: `internal_error|${cfg.configHash}`,
+          title: `${cfg.commentCheckName} internal error — use Re-run`,
+          summary:
+            'The comment count could not be computed. The check is completed as a failure so this pull request is not left pending forever.\n\nUse "Re-run" on this check to retry (or wait for the automatic re-check); see the app logs for the underlying error.',
+        });
+      } catch (completeErr) {
+        log.error(
+          {
+            evt: 'check_complete_failed',
+            check: cfg.commentCheckName,
+            owner: pull.owner,
+            repo: pull.repo,
+            pr: pull.pullNumber,
+            head_sha: checkRef.headSha,
+            err: completeErr instanceof Error ? completeErr.message : String(completeErr),
+          },
+          'failed to complete the in_progress comment-check run after an internal error',
+        );
+      }
+    }
+    throw err;
+  }
+
+  if (checkRunId !== undefined) {
+    await completeCheckRun(octokit, checkRef, checkRunId, completionFromVerdict(verdict));
+  } else if (latest !== null && latest.externalId === verdict.fingerprint) {
+    log.debug(
+      {
+        evt: 'check_write',
+        check: cfg.commentCheckName,
+        changed: false,
+        owner: pull.owner,
+        repo: pull.repo,
+        pr: pull.pullNumber,
+        head_sha: checkRef.headSha,
+      },
+      'fingerprint unchanged — skipping comment-check write',
+    );
+  } else {
+    await postCheckRun(octokit, checkRef, verdict);
+  }
+
+  log.info(
+    {
+      evt: 'comment_verdict',
+      owner: pull.owner,
+      repo: pull.repo,
+      pr: pull.pullNumber,
+      head_sha: checkRef.headSha,
+      trigger,
+      min_required: cfg.minPrComments,
+      conclusion: verdict.conclusion,
+      duration_ms: Date.now() - startedAt,
+    },
+    'comment requirement evaluated',
   );
 }
 

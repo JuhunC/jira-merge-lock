@@ -55,6 +55,16 @@ describe('renderHomepage', () => {
     expect(html).not.toContain('must reference at least one Jira issue key');
   });
 
+  it('describes the comment gate only when MIN_PR_COMMENTS > 0', () => {
+    const off = renderHomepage(loadConfig(testEnv()));
+    expect(off).not.toContain('Required discussion');
+
+    const on = renderHomepage(loadConfig(testEnv({ MIN_PR_COMMENTS: '2' })));
+    expect(on).toContain('Required discussion');
+    expect(on).toContain('2 comments from someone other than its author');
+    expect(on).toContain('jira-merge-lock-comments');
+  });
+
   it('never leaks secrets, Jira config, or the app id', () => {
     const html = renderHomepage(loadConfig(testEnv()));
     for (const secret of [

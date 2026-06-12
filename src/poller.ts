@@ -1,6 +1,6 @@
 import type { AppConfig } from './config.js';
 import type { JiraClient } from './jira.js';
-import { evaluatePullRequest } from './pipeline.js';
+import { evaluateAllChecks } from './pipeline.js';
 import {
   autoconfigureOrg,
   discoverPrefixRulesets,
@@ -179,7 +179,12 @@ export function createPoller(deps: PollerDeps): Poller {
       }
       counters.repos_scanned += 1;
       for (const item of prs) {
-        const pr = item as { number: number; head: { sha: string }; base: { ref: string; sha: string } };
+        const pr = item as {
+          number: number;
+          head: { sha: string };
+          base: { ref: string; sha: string };
+          user?: { login?: string } | null;
+        };
         counters.prs += 1;
         const pull: PullRef = {
           owner,
@@ -188,9 +193,10 @@ export function createPoller(deps: PollerDeps): Poller {
           headSha: pr.head.sha,
           baseRef: pr.base.ref,
           baseSha: pr.base.sha,
+          authorLogin: pr.user?.login,
         };
         try {
-          await evaluatePullRequest(
+          await evaluateAllChecks(
             { octokit, jira: deps.jira, cfg, scopeCache: deps.scopeCache, jiraCycleCache, log },
             pull,
             'poll',

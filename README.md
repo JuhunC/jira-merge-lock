@@ -38,6 +38,32 @@ once per poll cycle.
 
 There is no database; state lives in GitHub's own check runs. Restarts are free.
 
+### Optional second lock: required discussion (`MIN_PR_COMMENTS`)
+
+Set `MIN_PR_COMMENTS=1` (or higher) and the app posts a **second required
+check** (named `CHECK_NAME-comments` by default, override with
+`COMMENT_CHECK_NAME`) that blocks the merge until the PR has at least that many
+comments **from someone other than the PR author**. What counts, each once:
+PR conversation comments, inline review comments, and reviews with body text
+(a bare Approve without text does not). The author's own comments and bot
+accounts never count; comments whose author GitHub no longer knows (deleted
+accounts) are skipped.
+
+The comment check shares the Jira check's scope: auto-configure injects **both**
+required-check contexts into every prefix ruleset while the feature is on, and
+removes its own comment-check entry again when it is turned off (a required
+context nobody posts would leave PRs permanently unmergeable). It re-evaluates
+on comment/review webhooks (created, edited, deleted — so deleting the only
+qualifying comment re-locks the PR), on its own check re-run, and every poll
+cycle.
+
+> ⚠ **Permissions:** this feature needs the **Issues: read** permission and the
+> **Issue comment**, **Pull request review**, and **Pull request review
+> comment** events. New registrations from `app.yml` get them automatically;
+> for an app registered before v0.5.0, add the permission + events in the app's
+> **Permissions & events** settings, then approve the permission request on the
+> organization, **before** setting `MIN_PR_COMMENTS > 0`.
+
 ## Setup
 
 > **Placeholder used throughout:** `YOUR-DEPLOYMENT-HOST` = the public HTTPS
@@ -56,13 +82,15 @@ Least-privilege note: `organization_administration: write` exists solely for
 ruleset auto-configure. See [Hardened mode](#hardened-mode) to drop the writes.
 
 Registering manually instead? Set: repository **Checks: read & write**,
-**Pull requests: read**, **Contents: read**, **Merge queues: read**
-(+ Metadata, preset), and organization **Administration: read & write** — then
-subscribe to the events **Pull request**, **Check run**, **Check suite**,
-**Repository ruleset**, and **Merge group**. Event checkboxes appear in the UI
-only after the permission gating them is selected: *Repository ruleset*
-requires Administration (repo or org) read, and *Merge group* requires
-Merge queues read.
+**Pull requests: read**, **Contents: read**, **Issues: read**,
+**Merge queues: read** (+ Metadata, preset), and organization
+**Administration: read & write** — then subscribe to the events
+**Pull request**, **Check run**, **Check suite**, **Repository ruleset**,
+**Merge group**, **Issue comment**, **Pull request review**, and
+**Pull request review comment**. Event checkboxes appear in the UI only after
+the permission gating them is selected: *Repository ruleset* requires
+Administration (repo or org) read, *Merge group* requires Merge queues read,
+and *Issue comment* requires Issues read.
 
 ### 2. Install the app on your organization — on ALL repositories
 
@@ -124,6 +152,8 @@ All variables (defaults in parentheses; blank = required):
 | `JIRA_KEY_REGEX` | | `[A-Z][A-Z0-9]+-\d+` | word-boundary wrapped |
 | `JIRA_PROJECT_KEYS` | | — | allowlist, e.g. `PRJ,OPS`; recommended — kills `UTF-8`/`SHA-256` false positives |
 | `REQUIRE_ISSUE_KEY` | | `false` | `true`: zero-key PRs fail instead of passing |
+| `MIN_PR_COMMENTS` | | `0` | `>0`: also require N comments from non-authors as a [second check](#optional-second-lock-required-discussion-min_pr_comments); `0` disables |
+| `COMMENT_CHECK_NAME` | | `CHECK_NAME-comments` | name of the second check run / required status context |
 | `RULESET_NAME_PREFIX` | | `jira-merge-lock` | which org rulesets define scope / get auto-configured |
 | `RULESET_AUTOCONFIGURE` | | `true` | `false` = never write rulesets ([hardened mode](#hardened-mode)) |
 | `CHECK_NAME` | | `jira-merge-lock` | check-run name / required status context |
@@ -173,6 +203,7 @@ Structured JSON logs; one line per noteworthy event:
 | `evt` | Meaning |
 |---|---|
 | `verdict` | one PR evaluated — `owner, repo, pr, head_sha, trigger, keys, blocking, conclusion, duration_ms`. "Why is my PR locked?" is one grep away. |
+| `comment_verdict` | the `MIN_PR_COMMENTS` discussion gate evaluated one PR — `min_required, conclusion, trigger, duration_ms`. |
 | `poll_done` | end-of-cycle budget — `installations, rulesets, repos_scanned, repos_pruned, prs, jira_fetches, duration_ms`. A `poll_overrun` warning means raise `POLL_INTERVAL_SECONDS`. |
 | `ruleset_autoconfig` | a ruleset was updated — `action: injected` (entry written) or `repinned` (integration id fixed). |
 | `installation_coverage_warning` | the installation is on "selected repositories" — prefix rulesets may target repos the app cannot see (see troubleshooting). |
@@ -199,6 +230,7 @@ in the logs). Start troubleshooting here before digging into logs.
 | Nothing happens on PRs | Is the app installed on the org (and on **all** repositories)? Does an org ruleset name start with `RULESET_NAME_PREFIX`? Is that ruleset's enforcement **Active** (Disabled/Evaluate rulesets are out of scope by design)? Does it actually target the PR's repo and base branch? |
 | Every PR blocked with “Jira unreachable — cannot verify” (or “Jira authentication failed”) | Jira credentials or connectivity: check `/status` (shows the last Jira failure category) or `/readyz`, verify the auth block in `.env`, and for self-signed Jira Server/DC mount your CA and set `NODE_EXTRA_CA_CERTS` (below). Note: this is the designed fail-closed behavior — every evaluation during a Jira outage (or credential failure) fails the check; verdicts recover automatically within one poll interval of Jira coming back, and dedupe writes each PR's failure once per outage, not per cycle. |
 | PRs in some repo permanently unmergeable, app logs show nothing for it | Installation-coverage mismatch: a prefix ruleset targets a repo the app is not installed on. Install on **All repositories** (setup step 2). |
+| Comment check (`MIN_PR_COMMENTS`) never reacts to new comments, or errors when listing them | The app is missing the **Issues: read** permission or the comment/review event subscriptions (added for v0.5.0). Update the app's **Permissions & events** settings and approve the org's permission request — until then comment webhooks are not delivered and comment listing can 403. The poll cycle is the fallback trigger either way. |
 | `poll_cycle_failed` mentions `api.github.com` although `GHE_HOST` is set | The variable is not reaching the container. Check the startup log line `github_api_base` (it states the exact API target), and `docker compose exec jira-merge-lock env \| grep GHE`. Note: `docker-compose.sample.yml` does **not** read `.env` — set `GHE_HOST` in its `environment:` block. With the plain `docker-compose.yml`, put it in `.env`. Restart after changing either. |
 
 ### Merge queues

@@ -8,6 +8,8 @@
  *   extract.ts   extractJiraKeys(messages, cfg) -> string[]            (pure)
  *   jira.ts      JiraClient: getIssueStatuses(keys, cache?) -> JiraIssueOutcome[]
  *   evaluate.ts  buildVerdictFromOutcomes / buildErrorVerdict -> Verdict (pure)
+ *   comments.ts  countNonAuthorComments + buildCommentVerdict (the optional
+ *                MIN_PR_COMMENTS discussion gate, posted as a 2nd check run)
  *   commits.ts   listPrCommitMessages(octokit, pull) -> CommitListing
  *   checks.ts    findLatestCheckRun / postCheckRun / postSkippedRun
  *   rulesets.ts  injectRequiredCheck (pure), discoverPrefixRulesets,
@@ -108,6 +110,9 @@ export interface PullRef {
   headSha: string;
   baseRef: string; // base branch name WITHOUT "refs/heads/" prefix
   baseSha: string;
+  /** PR author login when the trigger payload carried it; the comment check
+   * fetches the PR to resolve it otherwise (rerequest payloads omit it). */
+  authorLogin?: string;
 }
 
 export interface CommitListing {

@@ -65,6 +65,7 @@ export async function postCheckRun(
 export async function postInProgressRun(
   octokit: OctokitLike,
   ref: CheckRef & { headSha: string },
+  output?: { title: string; summary: string },
 ): Promise<number> {
   const res = await octokit.request('POST /repos/{owner}/{repo}/check-runs', {
     owner: ref.owner,
@@ -72,7 +73,7 @@ export async function postInProgressRun(
     name: ref.checkName,
     head_sha: ref.headSha,
     status: 'in_progress',
-    output: {
+    output: output ?? {
       title: 'Verifying referenced Jira issues…',
       summary:
         "Scanning commit messages for issue keys and checking each issue's status in Jira.",

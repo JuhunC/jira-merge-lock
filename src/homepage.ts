@@ -37,6 +37,21 @@ export function renderHomepage(cfg: AppConfig): string {
     ? `<p>On this deployment a pull request <strong>must reference at least one Jira issue key</strong> in its commit messages — a pull request with no keys is blocked until one is added.</p>`
     : `<p>A pull request whose commit messages reference no Jira issue keys <strong>passes this check automatically</strong>.</p>`;
 
+  const commentGate =
+    cfg.minPrComments > 0
+      ? `<section class="card">
+<h2>Required discussion (<code>${escapeHtml(cfg.commentCheckName)}</code>)</h2>
+<p>This deployment also requires every pull request to have at least
+<strong>${cfg.minPrComments} comment${cfg.minPrComments === 1 ? '' : 's'} from someone other than its author</strong>
+before it can merge — posted as a separate required check named
+<code>${escapeHtml(cfg.commentCheckName)}</code> on the same branches.</p>
+<p>What counts: PR conversation comments, inline review comments, and reviews
+with body text. The pull request author's own comments and bot accounts do
+<strong>not</strong> count. The check re-runs automatically when comments are
+added or removed.</p>
+</section>`
+      : '';
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -97,6 +112,8 @@ ${allowlist}
 <h2>Pull requests without Jira keys</h2>
 ${zeroKeyPolicy}
 </section>
+
+${commentGate}
 
 <section class="card">
 <h2>Where this check applies</h2>

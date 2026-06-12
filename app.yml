@@ -22,6 +22,10 @@ default_permissions:
   pull_requests: read
   # Commit-compare fallback for PRs with >250 commits.
   contents: read
+  # PR conversation comments live on the ISSUE comments API, and the
+  # issue_comment webhook needs this — both used only by the optional
+  # MIN_PR_COMMENTS discussion gate.
+  issues: read
   # Required ONLY to receive the merge_group webhook event (merge-queue
   # support). The app never writes to merge queues.
   merge_queues: read
@@ -37,3 +41,7 @@ default_events:
   - check_suite
   - repository_ruleset
   - merge_group
+  # The three below feed the optional MIN_PR_COMMENTS discussion gate.
+  - issue_comment
+  - pull_request_review
+  - pull_request_review_comment
