@@ -143,6 +143,17 @@ export function renderStatusPage(
       ? `every ${cfg.pollIntervalSeconds} seconds (±10% jitter), plus one cycle at startup`
       : 'recurring polling disabled — one cycle at startup, then webhook-driven evaluations only';
 
+  const injectedChecks =
+    cfg.minPrComments > 0
+      ? `<code>${checkName}</code> and <code>${escapeHtml(cfg.commentCheckName)}</code> checks are`
+      : `<code>${checkName}</code> check is`;
+
+  const commentGate =
+    cfg.minPrComments > 0
+      ? `requires ${cfg.minPrComments} comment${cfg.minPrComments === 1 ? '' : 's'} from someone
+      other than the PR author — posted as the <code>${escapeHtml(cfg.commentCheckName)}</code> check`
+      : '<span class="muted">disabled (MIN_PR_COMMENTS=0)</span>';
+
   const c = snap.poll.lastCounters;
   const coverage = c
     ? `<p class="muted" style="margin-top:0.9rem">Last cycle covered:</p>
@@ -223,9 +234,10 @@ export function renderStatusPage(
   <dt>Last cycle</dt><dd>${pollCycleCell(snap.poll, now)}</dd>
   <dt>Auto-configure</dt><dd>${
     cfg.rulesetAutoconfigure
-      ? `enabled — the required <code>${checkName}</code> check is injected into every <code>${prefix}*</code> org ruleset`
-      : 'disabled — admins maintain the required-check entry in their rulesets by hand'
+      ? `enabled — the required ${injectedChecks} injected into every <code>${prefix}*</code> org ruleset`
+      : 'disabled — admins maintain the required-check entries in their rulesets by hand'
   }</dd>
+  <dt>Comment gate</dt><dd>${commentGate}</dd>
 </dl>
 ${coverage}
 </section>

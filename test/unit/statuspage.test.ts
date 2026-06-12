@@ -84,6 +84,23 @@ describe('renderStatusPage', () => {
     expect(html).toContain('850 ms');
   });
 
+  it('shows the comment gate as disabled by default and its policy when enabled', () => {
+    const { tracker } = freshSnap();
+    const off = renderStatusPage(cfg, tracker.snapshot(), 0);
+    expect(off).toContain('disabled (MIN_PR_COMMENTS=0)');
+    expect(off).toContain('the required <code>jira-merge-lock</code> check is injected');
+
+    const enabled = loadConfig(testEnv({ MIN_PR_COMMENTS: '2' }));
+    const on = renderStatusPage(enabled, tracker.snapshot(), 0);
+    expect(on).toContain('requires 2 comments from someone');
+    expect(on).toContain('<code>jira-merge-lock-comments</code> check');
+    expect(on).not.toContain('disabled (MIN_PR_COMMENTS=0)');
+    // Auto-configure now lists both injected contexts.
+    expect(on).toContain(
+      '<code>jira-merge-lock</code> and <code>jira-merge-lock-comments</code> checks are injected',
+    );
+  });
+
   it('shows the last received webhook event', () => {
     const { tracker } = freshSnap(500);
     tracker.recordWebhook('pull_request.opened');
